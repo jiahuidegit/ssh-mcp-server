@@ -1,5 +1,5 @@
 {
-  "name": "ssh-mcp-server",
+  "name": "@erliban/ssh-mcp-server",
   "version": "0.1.0",
   "description": "SSH MCP Server - 安全的远程服务器管理工具，支持 SSH 连接、命令执行、SFTP 文件传输",
   "main": "dist/index.js",
