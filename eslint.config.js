@@ -13,6 +13,19 @@ export default [
         sourceType: 'module',
         project: './tsconfig.json',
       },
+      globals: {
+        // Node.js 全局变量
+        Buffer: 'readonly',
+        process: 'readonly',
+        setTimeout: 'readonly',
+        clearTimeout: 'readonly',
+        setInterval: 'readonly',
+        clearInterval: 'readonly',
+        console: 'readonly',
+        NodeJS: 'readonly',
+        __dirname: 'readonly',
+        __filename: 'readonly',
+      },
     },
     plugins: {
       '@typescript-eslint': tseslint,
