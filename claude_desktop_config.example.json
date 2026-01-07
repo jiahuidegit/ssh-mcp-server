@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "ssh": {
+      "command": "node",
+      "args": ["${workspaceFolder}/dist/index.js"],
+      "env": {
+        "SSH_MCP_LOG_LEVEL": "info",
+        "SSH_MCP_DATA_DIR": "~/.ssh-mcp",
+        "SSH_MCP_CONN_TIMEOUT": "30000",
+        "SSH_MCP_CMD_TIMEOUT": "60000",
+        "SSH_MCP_IDLE_TIMEOUT": "300000",
+        "SSH_MCP_MAX_CONNECTIONS": "10"
+      }
+    }
+  }
+}

@@ -1,0 +1,61 @@
+{
+  "name": "ssh-mcp-server",
+  "version": "0.1.0",
+  "description": "SSH MCP Server - 安全的远程服务器管理工具，支持 SSH 连接、命令执行、SFTP 文件传输",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "ssh-mcp-server": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc -w",
+    "start": "node dist/index.js",
+    "lint": "eslint src --ext .ts",
+    "lint:fix": "eslint src --ext .ts --fix",
+    "format": "prettier --write \"src/**/*.ts\"",
+    "test": "vitest run --exclude test/integration.test.ts",
+    "test:watch": "vitest --exclude test/integration.test.ts",
+    "test:integration": "vitest run test/integration.test.ts",
+    "test:all": "vitest run",
+    "clean": "rm -rf dist",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "mcp",
+    "ssh",
+    "sftp",
+    "claude",
+    "ai",
+    "automation",
+    "devops"
+  ],
+  "author": "",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "keytar": "^7.9.0",
+    "pino": "^9.5.0",
+    "pino-pretty": "^13.0.0",
+    "ssh2": "^1.15.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/ssh2": "^1.15.1",
+    "@typescript-eslint/eslint-plugin": "^8.17.0",
+    "@typescript-eslint/parser": "^8.17.0",
+    "eslint": "^9.16.0",
+    "prettier": "^3.4.2",
+    "testcontainers": "^11.11.0",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}
