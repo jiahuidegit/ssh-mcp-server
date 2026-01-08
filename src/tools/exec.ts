@@ -7,6 +7,47 @@ import { z } from 'zod';
 import { CommandExecutor } from '../core/command-executor.js';
 import { ExecResult, BatchExecResult } from '../types/index.js';
 
+// 危险命令模式列表
+const DANGEROUS_PATTERNS = [
+  // 删除根目录或系统目录
+  { pattern: /rm\s+(-[rf]+\s+)*[\/]\s*$/, desc: '删除根目录' },
+  { pattern: /rm\s+(-[rf]+\s+)*\/\*/, desc: '删除根目录下所有文件' },
+  { pattern: /rm\s+(-[rf]+\s+)*\/(etc|usr|var|bin|sbin|boot|lib|lib64|proc|sys|dev|root|home)\b/, desc: '删除系统关键目录' },
+  // 格式化磁盘
+  { pattern: /mkfs\s/, desc: '格式化磁盘' },
+  { pattern: /dd\s+.*of=\/dev\/[sh]d[a-z]/, desc: '覆写磁盘' },
+  // 危险的 chmod/chown
+  { pattern: /chmod\s+(-R\s+)*777\s+\//, desc: '递归修改根目录权限' },
+  { pattern: /chown\s+(-R\s+)*.*\s+\/\s*$/, desc: '递归修改根目录所有者' },
+  // 清空文件
+  { pattern: />\s*\/etc\/passwd/, desc: '清空密码文件' },
+  { pattern: />\s*\/etc\/shadow/, desc: '清空影子密码文件' },
+  // Fork 炸弹
+  { pattern: /:\(\)\s*\{\s*:\|:&\s*\};\s*:/, desc: 'Fork 炸弹' },
+  // 危险的 wget/curl 执行
+  { pattern: /(wget|curl).*\|\s*(ba)?sh/, desc: '从网络下载并执行脚本' },
+  // 关机/重启
+  { pattern: /\b(shutdown|reboot|init\s+[06]|poweroff)\b/, desc: '关机或重启系统' },
+  // 杀死所有进程
+  { pattern: /kill\s+-9\s+-1/, desc: '杀死所有进程' },
+  { pattern: /killall\s+-9/, desc: '批量杀死进程' },
+];
+
+/**
+ * 检测命令是否危险
+ * @returns 危险描述，如果安全则返回 null
+ */
+function detectDangerousCommand(command: string): string | null {
+  const normalizedCmd = command.toLowerCase().replace(/\s+/g, ' ').trim();
+
+  for (const { pattern, desc } of DANGEROUS_PATTERNS) {
+    if (pattern.test(normalizedCmd) || pattern.test(command)) {
+      return desc;
+    }
+  }
+  return null;
+}
+
 // exec 参数 Schema
 export const ExecSchema = z.object({
   command: z.string().min(1, '命令不能为空'),
@@ -15,6 +56,8 @@ export const ExecSchema = z.object({
   username: z.string().optional(),
   timeout: z.number().int().min(1000).optional(),
   cwd: z.string().optional(),
+  // 确认参数：危险命令需要用户确认后设置为 true
+  confirmed: z.boolean().optional(),
 });
 
 // exec_sudo 参数 Schema
@@ -25,6 +68,8 @@ export const ExecSudoSchema = z.object({
   port: z.number().int().min(1).max(65535).optional(),
   username: z.string().optional(),
   timeout: z.number().int().min(1000).optional(),
+  // 确认参数：危险命令需要用户确认后设置为 true
+  confirmed: z.boolean().optional(),
 });
 
 // exec_batch 参数 Schema
@@ -38,6 +83,8 @@ export const ExecBatchSchema = z.object({
     })
   ).min(1, '至少需要一台服务器'),
   timeout: z.number().int().min(1000).optional(),
+  // 确认参数：危险命令需要用户确认后设置为 true
+  confirmed: z.boolean().optional(),
 });
 
 export type ExecParams = z.infer<typeof ExecSchema>;
@@ -53,7 +100,16 @@ export class ExecTools {
   /**
    * 执行命令
    */
-  async exec(params: ExecParams): Promise<ExecResult> {
+  async exec(params: ExecParams): Promise<ExecResult | { warning: string; requireConfirmation: true }> {
+    // 危险命令检测
+    const danger = detectDangerousCommand(params.command);
+    if (danger && !params.confirmed) {
+      return {
+        warning: `⚠️ 检测到危险命令: ${danger}\n命令: ${params.command}\n\n此命令可能对服务器造成不可恢复的损害！如果确定要执行，请用户确认后重新调用并设置 confirmed: true`,
+        requireConfirmation: true,
+      };
+    }
+
     return this.executor.exec(
       params.command,
       params.host,
@@ -69,7 +125,16 @@ export class ExecTools {
   /**
    * 执行 sudo 命令
    */
-  async execSudo(params: ExecSudoParams): Promise<ExecResult> {
+  async execSudo(params: ExecSudoParams): Promise<ExecResult | { warning: string; requireConfirmation: true }> {
+    // sudo 命令更危险，进行检测
+    const danger = detectDangerousCommand(params.command);
+    if (danger && !params.confirmed) {
+      return {
+        warning: `⚠️ 检测到危险的 sudo 命令: ${danger}\n命令: sudo ${params.command}\n\n此命令以 root 权限执行，可能对服务器造成不可恢复的损害！如果确定要执行，请用户确认后重新调用并设置 confirmed: true`,
+        requireConfirmation: true,
+      };
+    }
+
     return this.executor.execSudo(
       params.command,
       params.sudoPassword,
@@ -83,7 +148,16 @@ export class ExecTools {
   /**
    * 批量执行命令
    */
-  async execBatch(params: ExecBatchParams): Promise<{ results: BatchExecResult[] }> {
+  async execBatch(params: ExecBatchParams): Promise<{ results: BatchExecResult[] } | { warning: string; requireConfirmation: true }> {
+    // 批量执行更危险，进行检测
+    const danger = detectDangerousCommand(params.command);
+    if (danger && !params.confirmed) {
+      return {
+        warning: `⚠️ 检测到危险的批量命令: ${danger}\n命令: ${params.command}\n目标服务器: ${params.servers.length} 台\n\n此命令将在多台服务器上执行，可能造成大规模损害！如果确定要执行，请用户确认后重新调用并设置 confirmed: true`,
+        requireConfirmation: true,
+      };
+    }
+
     const results = await this.executor.execBatch(
       params.command,
       params.servers,

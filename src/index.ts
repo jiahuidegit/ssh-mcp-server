@@ -225,7 +225,7 @@ class SSHMCPServer {
       // 命令执行
       {
         name: 'exec',
-        description: '在远程服务器执行命令',
+        description: '在远程服务器执行命令。危险命令（如 rm -rf /）需要用户确认',
         inputSchema: {
           type: 'object',
           properties: {
@@ -235,13 +235,14 @@ class SSHMCPServer {
             username: { type: 'string', description: '用户名' },
             timeout: { type: 'number', description: '命令超时时间（毫秒）' },
             cwd: { type: 'string', description: '工作目录' },
+            confirmed: { type: 'boolean', description: '危险命令确认标志，用户明确同意后设置为 true' },
           },
           required: ['command'],
         },
       },
       {
         name: 'exec_sudo',
-        description: '以 sudo 权限执行命令',
+        description: '以 sudo 权限执行命令。危险命令需要用户确认',
         inputSchema: {
           type: 'object',
           properties: {
@@ -251,13 +252,14 @@ class SSHMCPServer {
             port: { type: 'number', description: 'SSH 端口' },
             username: { type: 'string', description: '用户名' },
             timeout: { type: 'number', description: '命令超时时间（毫秒）' },
+            confirmed: { type: 'boolean', description: '危险命令确认标志，用户明确同意后设置为 true' },
           },
           required: ['command', 'sudoPassword'],
         },
       },
       {
         name: 'exec_batch',
-        description: '在多台服务器批量执行命令',
+        description: '在多台服务器批量执行命令。危险命令需要用户确认',
         inputSchema: {
           type: 'object',
           properties: {
@@ -276,6 +278,7 @@ class SSHMCPServer {
               description: '服务器列表',
             },
             timeout: { type: 'number', description: '命令超时时间（毫秒）' },
+            confirmed: { type: 'boolean', description: '危险命令确认标志，用户明确同意后设置为 true' },
           },
           required: ['command', 'servers'],
         },
