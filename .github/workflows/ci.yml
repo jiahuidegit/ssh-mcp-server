@@ -3,6 +3,8 @@ name: CI
 on:
   push:
     branches: [main, master]
+    tags:
+      - 'v*'  # 触发 Release 的 tag 格式
   pull_request:
     branches: [main, master]
 
@@ -12,7 +14,7 @@ jobs:
 
     strategy:
       matrix:
-        node-version: [20.x, 22.x]  # ESLint 9 需要 Node >= 18.18
+        node-version: [20.x, 22.x]
 
     steps:
       - name: Checkout
@@ -59,7 +61,7 @@ jobs:
       - name: Integration Tests
         run: npm run test:integration
         timeout-minutes: 10
-        continue-on-error: true  # 集成测试失败不阻塞，可能是 Docker 环境问题
+        continue-on-error: true
 
   publish:
     runs-on: ubuntu-latest
@@ -87,4 +89,79 @@ jobs:
         run: npm publish --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        continue-on-error: true  # 版本号相同时不失败
+        continue-on-error: true
+
+  release:
+    runs-on: ubuntu-latest
+    needs: [test, integration-test]
+    if: startsWith(github.ref, 'refs/tags/v')
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.x'
+          registry-url: 'https://registry.npmjs.org'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Publish to npm
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        continue-on-error: true
+
+      - name: Extract version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      - name: Extract changelog for this version
+        id: changelog
+        run: |
+          # 提取当前版本的 changelog
+          VERSION=${{ steps.version.outputs.VERSION }}
+          CHANGELOG=$(awk "/## \[${VERSION}\]/{flag=1; next} /## \[/{flag=0} flag" CHANGELOG.md)
+          # 处理多行输出
+          echo "CHANGELOG<<EOF" >> $GITHUB_OUTPUT
+          echo "$CHANGELOG" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          name: v${{ steps.version.outputs.VERSION }}
+          body: |
+            ## SSH MCP Server v${{ steps.version.outputs.VERSION }}
+
+            ${{ steps.changelog.outputs.CHANGELOG }}
+
+            ### Installation
+
+            ```bash
+            npx @erliban/ssh-mcp-server
+            ```
+
+            Or install globally:
+
+            ```bash
+            npm install -g @erliban/ssh-mcp-server
+            ```
+
+            📦 [npm package](https://www.npmjs.com/package/@erliban/ssh-mcp-server)
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
