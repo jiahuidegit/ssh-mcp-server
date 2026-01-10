@@ -71,6 +71,51 @@ export class SSHManager {
       port: options.port ?? 22,
       username: options.username,
       readyTimeout: this.config.connectionTimeout,
+      // 启用 keepalive 保持连接活跃
+      keepaliveInterval: 10000,
+      keepaliveCountMax: 3,
+      // 增加算法兼容性（支持旧版 SSH 服务器）
+      algorithms: {
+        kex: [
+          'curve25519-sha256',
+          'curve25519-sha256@libssh.org',
+          'ecdh-sha2-nistp256',
+          'ecdh-sha2-nistp384',
+          'ecdh-sha2-nistp521',
+          'diffie-hellman-group-exchange-sha256',
+          'diffie-hellman-group14-sha256',
+          'diffie-hellman-group14-sha1',
+          'diffie-hellman-group1-sha1',
+        ],
+        cipher: [
+          'aes128-ctr',
+          'aes192-ctr',
+          'aes256-ctr',
+          'aes128-gcm',
+          'aes128-gcm@openssh.com',
+          'aes256-gcm',
+          'aes256-gcm@openssh.com',
+          'aes256-cbc',
+          'aes192-cbc',
+          'aes128-cbc',
+          '3des-cbc',
+        ],
+        serverHostKey: [
+          'ssh-ed25519',
+          'ecdsa-sha2-nistp256',
+          'ecdsa-sha2-nistp384',
+          'ecdsa-sha2-nistp521',
+          'rsa-sha2-512',
+          'rsa-sha2-256',
+          'ssh-rsa',
+          'ssh-dss',
+        ],
+        hmac: [
+          'hmac-sha2-256',
+          'hmac-sha2-512',
+          'hmac-sha1',
+        ],
+      },
     };
 
     // 设置认证方式
@@ -88,8 +133,39 @@ export class SSHManager {
     try {
       await withTimeout(
         new Promise<void>((resolve, reject) => {
-          client.on('ready', () => resolve());
-          client.on('error', (err) => reject(err));
+          // 监听连接事件
+          client.on('ready', () => {
+            this.logger.log('debug', 'ssh_ready', { server: key });
+            resolve();
+          });
+          client.on('error', (err) => {
+            this.logger.log('error', 'ssh_error', { server: key, error: err.message });
+            reject(err);
+          });
+
+          // 监听连接断开事件，自动清理
+          client.on('close', () => {
+            this.logger.log('debug', 'ssh_close', { server: key });
+            // 自动从连接池中移除
+            if (this.connections.has(key)) {
+              this.connections.delete(key);
+              this.logger.log('info', 'ssh_auto_cleanup', {
+                server: key,
+                reason: 'connection closed'
+              });
+            }
+          });
+          client.on('end', () => {
+            this.logger.log('debug', 'ssh_end', { server: key });
+          });
+
+          // 启用 debug 模式（仅在 debug 级别时）
+          if (this.config.logLevel === 'debug') {
+            connectConfig.debug = (msg: string) => {
+              this.logger.log('debug', 'ssh_debug', { server: key, message: msg });
+            };
+          }
+
           client.connect(connectConfig);
         }),
         this.config.connectionTimeout,
