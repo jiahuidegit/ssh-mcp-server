@@ -21,6 +21,9 @@ interface SSHConnection {
   config: ConnectOptions;
   connectedAt: Date;
   lastActivity: Date;
+  isHealthy: boolean; // 连接健康状态
+  lastHealthCheck?: Date; // 最后一次健康检查时间
+  isManualDisconnect: boolean; // 是否为主动断开（用于区分异常断开）
 }
 
 /**
@@ -30,6 +33,7 @@ interface SSHConnection {
 export class SSHManager {
   private connections: Map<string, SSHConnection> = new Map();
   private cleanupTimer?: NodeJS.Timeout;
+  private healthCheckTimer?: NodeJS.Timeout; // 健康检查定时器
   private config: MCPServerConfig;
   private logger: AuditLogger;
 
@@ -37,6 +41,9 @@ export class SSHManager {
     this.config = { ...DEFAULT_CONFIG, ...config };
     this.logger = logger;
     this.startCleanupTimer();
+    if (this.config.enableHealthCheck) {
+      this.startHealthCheckTimer();
+    }
   }
 
   /**
@@ -146,12 +153,21 @@ export class SSHManager {
           // 监听连接断开事件，自动清理
           client.on('close', () => {
             this.logger.log('debug', 'ssh_close', { server: key });
+            const conn = this.connections.get(key);
+            // 只有在非主动断开时才标记为异常
+            if (conn && !conn.isManualDisconnect) {
+              conn.isHealthy = false;
+              this.logger.log('warn', 'ssh_unexpected_close', {
+                server: key,
+                reason: '连接意外关闭'
+              });
+            }
             // 自动从连接池中移除
             if (this.connections.has(key)) {
               this.connections.delete(key);
               this.logger.log('info', 'ssh_auto_cleanup', {
                 server: key,
-                reason: 'connection closed'
+                reason: conn?.isManualDisconnect ? 'manual disconnect' : 'connection closed'
               });
             }
           });
@@ -178,6 +194,9 @@ export class SSHManager {
         config: options,
         connectedAt: now,
         lastActivity: now,
+        isHealthy: true,
+        lastHealthCheck: now,
+        isManualDisconnect: false,
       });
 
       this.logger.log('info', 'ssh_connect', {
@@ -219,11 +238,74 @@ export class SSHManager {
   }
 
   /**
+   * 重新连接（用于连接丢失后恢复）
+   */
+  async reconnect(host: string, port: number, username: string): Promise<ConnectionStatus> {
+    const key = getConnectionKey(host, port, username);
+    const conn = this.connections.get(key);
+
+    if (!conn) {
+      throw new SSHError(
+        SSHErrorCode.NOT_CONNECTED,
+        '无法重连：连接配置不存在'
+      );
+    }
+
+    // 先断开旧连接
+    await this.disconnectByKey(key);
+
+    // 使用原有配置重新连接
+    let attempts = 0;
+    const maxAttempts = this.config.maxReconnectAttempts;
+
+    while (attempts < maxAttempts) {
+      attempts++;
+      try {
+        this.logger.log('info', 'ssh_reconnect_attempt', {
+          server: key,
+          attempt: attempts,
+          maxAttempts,
+        });
+
+        const status = await this.connect(conn.config);
+        this.logger.log('info', 'ssh_reconnect_success', {
+          server: key,
+          attempts,
+        });
+        return status;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        this.logger.log('warn', 'ssh_reconnect_failed', {
+          server: key,
+          attempt: attempts,
+          error: message,
+        });
+
+        if (attempts >= maxAttempts) {
+          throw new SSHError(
+            SSHErrorCode.CONNECTION_FAILED,
+            `重连失败 (${maxAttempts} 次尝试): ${message}`,
+            error
+          );
+        }
+
+        // 等待后重试（指数退避）
+        const delay = Math.min(1000 * Math.pow(2, attempts - 1), 10000);
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
+    }
+
+    // 不应该到这里，但为了类型安全
+    throw new SSHError(SSHErrorCode.CONNECTION_FAILED, '重连失败');
+  }
+
+  /**
    * 根据 key 断开连接
    */
   private async disconnectByKey(key: string): Promise<void> {
     const conn = this.connections.get(key);
     if (conn) {
+      conn.isManualDisconnect = true; // 标记为主动断开
       conn.client.end();
       this.connections.delete(key);
       this.logger.log('info', 'ssh_disconnect', { server: key });
@@ -313,6 +395,7 @@ export class SSHManager {
     for (const [key, conn] of this.connections) {
       const idleTime = now - conn.lastActivity.getTime();
       if (idleTime > this.config.idleTimeout) {
+        conn.isManualDisconnect = true; // 标记为主动断开
         conn.client.end();
         this.connections.delete(key);
         this.logger.log('info', 'ssh_idle_cleanup', {
@@ -324,11 +407,77 @@ export class SSHManager {
   }
 
   /**
+   * 启动健康检查定时器
+   */
+  private startHealthCheckTimer(): void {
+    this.healthCheckTimer = setInterval(() => {
+      this.performHealthCheck();
+    }, this.config.healthCheckInterval);
+
+    this.logger.log('debug', 'health_check_started', {
+      interval: `${this.config.healthCheckInterval}ms`,
+    });
+  }
+
+  /**
+   * 执行健康检查（心跳检测）
+   */
+  private performHealthCheck(): void {
+    for (const [key, conn] of this.connections) {
+      // 执行简单的 echo 命令作为心跳
+      conn.client.exec('echo "heartbeat"', (err, stream) => {
+        if (err) {
+          // 心跳失败，标记为不健康
+          conn.isHealthy = false;
+          this.logger.log('warn', 'health_check_failed', {
+            server: key,
+            error: err.message,
+          });
+          return;
+        }
+
+        let response = '';
+        stream.on('data', (data: Buffer) => {
+          response += data.toString();
+        });
+
+        stream.on('close', () => {
+          // 检查响应是否正确
+          if (response.trim() === 'heartbeat') {
+            conn.isHealthy = true;
+            conn.lastHealthCheck = new Date();
+            this.logger.log('debug', 'health_check_success', {
+              server: key,
+            });
+          } else {
+            conn.isHealthy = false;
+            this.logger.log('warn', 'health_check_invalid_response', {
+              server: key,
+              response: response.trim(),
+            });
+          }
+        });
+
+        stream.on('error', (streamErr: Error) => {
+          conn.isHealthy = false;
+          this.logger.log('warn', 'health_check_stream_error', {
+            server: key,
+            error: streamErr.message,
+          });
+        });
+      });
+    }
+  }
+
+  /**
    * 销毁管理器（关闭所有连接和定时器）
    */
   async destroy(): Promise<void> {
     if (this.cleanupTimer) {
       clearInterval(this.cleanupTimer);
+    }
+    if (this.healthCheckTimer) {
+      clearInterval(this.healthCheckTimer);
     }
     await this.disconnect();
   }

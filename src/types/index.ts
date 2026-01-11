@@ -56,7 +56,8 @@ export interface ConnectionStatus {
 
 /** 命令执行选项 */
 export interface ExecOptions {
-  timeout?: number; // 毫秒
+  timeout?: number; // 自定义超时，毫秒
+  useLongTimeout?: boolean; // 使用长超时（如 docker build），会使用 longCommandTimeout
   cwd?: string;
   env?: Record<string, string>;
 }
@@ -153,19 +154,29 @@ export class SSHError extends Error {
 export interface MCPServerConfig {
   logLevel: LogLevel;
   logFile?: string;
-  connectionTimeout: number; // 毫秒
-  commandTimeout: number; // 毫秒
+  connectionTimeout: number; // SSH 连接建立超时，毫秒
+  commandTimeout: number; // 普通命令执行超时，毫秒
+  longCommandTimeout: number; // 耗时命令超时（如 docker build），毫秒
   idleTimeout: number; // 连接池空闲超时，毫秒
   maxConnections: number;
   dataDir: string; // 数据存储目录
+  enableHealthCheck: boolean; // 是否启用连接健康检查
+  healthCheckInterval: number; // 健康检查间隔，毫秒
+  autoReconnect: boolean; // 命令超时后是否自动重连
+  maxReconnectAttempts: number; // 最大重连尝试次数
 }
 
 /** 默认配置 */
 export const DEFAULT_CONFIG: MCPServerConfig = {
   logLevel: 'info',
-  connectionTimeout: 30000,
-  commandTimeout: 60000,
+  connectionTimeout: 30000, // 30 秒
+  commandTimeout: 60000, // 1 分钟
+  longCommandTimeout: 1800000, // 30 分钟（用于 docker build 等耗时操作）
   idleTimeout: 300000, // 5 分钟
   maxConnections: 10,
   dataDir: '~/.ssh-mcp',
+  enableHealthCheck: true,
+  healthCheckInterval: 30000, // 30 秒心跳检测
+  autoReconnect: true,
+  maxReconnectAttempts: 3,
 };

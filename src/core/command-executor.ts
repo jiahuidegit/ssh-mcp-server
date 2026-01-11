@@ -43,9 +43,24 @@ export class CommandExecutor {
     username?: string,
     options: ExecOptions = {}
   ): Promise<ExecResult> {
-    const client = this.getClient(host, port, username);
+    // 支持自动重连
+    const client = await this.getClientWithReconnect(host, port, username);
     const serverKey = this.getServerKey(host, port, username);
-    const timeout = options.timeout ?? this.config.commandTimeout;
+
+    // 确定超时时间：自定义 > 长超时 > 默认超时
+    let timeout: number;
+    if (options.timeout) {
+      timeout = options.timeout;
+    } else if (options.useLongTimeout) {
+      timeout = this.config.longCommandTimeout;
+      this.logger.log('debug', 'command_exec', {
+        server: serverKey,
+        message: `使用长超时模式: ${timeout}ms`,
+      });
+    } else {
+      timeout = this.config.commandTimeout;
+    }
+
     const startTime = Date.now();
 
     try {
@@ -75,8 +90,20 @@ export class CommandExecutor {
         duration,
       });
 
+      // 超时错误处理
       if (message.includes('超时')) {
-        throw new SSHError(SSHErrorCode.COMMAND_TIMEOUT, message);
+        // 检查连接是否仍然有效
+        const isConnected = this.checkConnection(host, port, username);
+        this.logger.log('warn', 'command_timeout', {
+          server: serverKey,
+          timeout,
+          connectionStatus: isConnected ? '连接仍有效' : '连接已断开',
+        });
+
+        throw new SSHError(
+          SSHErrorCode.COMMAND_TIMEOUT,
+          `${message}\n提示：命令可能仍在后台运行。如需执行耗时命令（如 docker build），请使用 useLongTimeout: true 选项。`
+        );
       }
       throw new SSHError(SSHErrorCode.CONNECTION_FAILED, `命令执行失败: ${message}`, error);
     }
@@ -162,6 +189,36 @@ export class CommandExecutor {
   }
 
   /**
+   * 获取 SSH 客户端（支持自动重连）
+   */
+  private async getClientWithReconnect(
+    host?: string,
+    port?: number,
+    username?: string
+  ): Promise<Client> {
+    try {
+      return this.getClient(host, port, username);
+    } catch (error) {
+      // 如果启用了自动重连，尝试重连
+      if (
+        error instanceof SSHError &&
+        error.code === SSHErrorCode.NOT_CONNECTED &&
+        this.config.autoReconnect &&
+        host &&
+        username
+      ) {
+        this.logger.log('info', 'auto_reconnect_triggered', {
+          server: getConnectionKey(host, port ?? 22, username),
+        });
+
+        await this.sshManager.reconnect(host, port ?? 22, username);
+        return this.getClient(host, port, username);
+      }
+      throw error;
+    }
+  }
+
+  /**
    * 获取服务器标识
    */
   private getServerKey(host?: string, port?: number, username?: string): string {
@@ -170,6 +227,20 @@ export class CommandExecutor {
     }
     const active = this.sshManager.getActiveConnection();
     return active?.key ?? 'unknown';
+  }
+
+  /**
+   * 检查连接是否仍然有效
+   */
+  private checkConnection(host?: string, port?: number, username?: string): boolean {
+    try {
+      const client = this.getClient(host, port, username);
+      // ssh2 客户端没有提供直接的连接状态检查
+      // 通过能否获取到客户端来判断连接是否有效
+      return !!client;
+    } catch {
+      return false;
+    }
   }
 
   /**

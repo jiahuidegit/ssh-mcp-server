@@ -55,6 +55,7 @@ export const ExecSchema = z.object({
   port: z.number().int().min(1).max(65535).optional(),
   username: z.string().optional(),
   timeout: z.number().int().min(1000).optional(),
+  useLongTimeout: z.boolean().optional(), // 使用长超时（30分钟，适用于 docker build 等耗时操作）
   cwd: z.string().optional(),
   // 确认参数：危险命令需要用户确认后设置为 true
   confirmed: z.boolean().optional(),
@@ -110,16 +111,39 @@ export class ExecTools {
       };
     }
 
-    return this.executor.exec(
-      params.command,
-      params.host,
-      params.port,
-      params.username,
-      {
-        timeout: params.timeout,
-        cwd: params.cwd,
+    try {
+      return await this.executor.exec(
+        params.command,
+        params.host,
+        params.port,
+        params.username,
+        {
+          timeout: params.timeout,
+          useLongTimeout: params.useLongTimeout,
+          cwd: params.cwd,
+        }
+      );
+    } catch (error) {
+      // 增强错误提示
+      if (error instanceof Error) {
+        const message = error.message;
+
+        // 超时错误提示
+        if (message.includes('超时') && !params.useLongTimeout) {
+          throw new Error(
+            `${message}\n\n💡 建议：如果是 docker build、npm install 等耗时命令，请使用 useLongTimeout: true 选项（默认30分钟超时）。`
+          );
+        }
+
+        // 连接断开错误提示
+        if (message.includes('没有可用的 SSH 连接')) {
+          throw new Error(
+            `${message}\n\n💡 建议：\n1. 使用 ssh_connect 工具重新建立连接\n2. 如果启用了自动重连（默认开启），系统会尝试自动恢复连接`
+          );
+        }
       }
-    );
+      throw error;
+    }
   }
 
   /**

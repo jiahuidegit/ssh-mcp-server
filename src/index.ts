@@ -104,9 +104,14 @@ class SSHMCPServer {
       logFile: getEnvConfig('SSH_MCP_LOG_FILE', DEFAULT_CONFIG.logFile),
       connectionTimeout: getEnvConfig('SSH_MCP_CONN_TIMEOUT', DEFAULT_CONFIG.connectionTimeout),
       commandTimeout: getEnvConfig('SSH_MCP_CMD_TIMEOUT', DEFAULT_CONFIG.commandTimeout),
+      longCommandTimeout: getEnvConfig('SSH_MCP_LONG_CMD_TIMEOUT', DEFAULT_CONFIG.longCommandTimeout),
       idleTimeout: getEnvConfig('SSH_MCP_IDLE_TIMEOUT', DEFAULT_CONFIG.idleTimeout),
       maxConnections: getEnvConfig('SSH_MCP_MAX_CONNECTIONS', DEFAULT_CONFIG.maxConnections),
       dataDir: getEnvConfig('SSH_MCP_DATA_DIR', DEFAULT_CONFIG.dataDir),
+      enableHealthCheck: getEnvConfig('SSH_MCP_HEALTH_CHECK', DEFAULT_CONFIG.enableHealthCheck),
+      healthCheckInterval: getEnvConfig('SSH_MCP_HEALTH_CHECK_INTERVAL', DEFAULT_CONFIG.healthCheckInterval),
+      autoReconnect: getEnvConfig('SSH_MCP_AUTO_RECONNECT', DEFAULT_CONFIG.autoReconnect),
+      maxReconnectAttempts: getEnvConfig('SSH_MCP_MAX_RECONNECT_ATTEMPTS', DEFAULT_CONFIG.maxReconnectAttempts),
     };
   }
 

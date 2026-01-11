@@ -11,8 +11,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+---
+
+## [0.2.2] - 2025-01-11
+
 ### Added
-- 添加项目开发规范文档 CLAUDE.md
+- ⏱️ **长超时支持** - 新增 `longCommandTimeout` 配置，默认 30 分钟，适用于 docker build 等耗时操作
+- 💓 **连接健康检查** - 新增心跳检测机制，每 30 秒自动检查连接状态
+- 🔄 **自动重连功能** - 连接丢失后自动重连，支持指数退避重试策略（最多 3 次）
+- 📊 **增强错误提示** - 超时和连接错误提供详细的解决建议
+
+### Changed
+- 🚀 **优化超时处理** - 命令超时不再立即销毁连接，支持连接状态检查
+- 🔧 **改进连接管理** - 区分主动断开和异常断开，优化连接池清理逻辑
+- 📝 **完善日志记录** - 增加健康检查、重连等关键操作的详细日志
+
+### Fixed
+- 🐛 修复命令超时后连接意外关闭导致的 `SSH_NOT_CONNECTED` 错误
+- 🐛 修复长时间运行命令（如 docker build）超时问题
+
+---
+
+## [0.1.2] - 2025-01-08
+
+### Added
+- 添加项目开发规范文档
 - 添加贡献指南 CONTRIBUTING.md
 - 添加行为准则 CODE_OF_CONDUCT.md
 - 添加 GitHub Issue/PR 模板
