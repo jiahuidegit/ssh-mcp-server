@@ -52,7 +52,7 @@ npm run build
 
 ### 如果使用 npx（推荐）
 
-npx 会自动使用最新版本，只需重启 Claude Desktop：
+npx 会自动使用最新版本，只需重启你的 MCP 客户端：
 
 ```bash
 # 无需手动更新，npx 总是获取最新版本
@@ -77,7 +77,9 @@ npm list -g @erliban/ssh-mcp-server
 
 ---
 
-## 🎮 配置 Claude Desktop
+## 🎮 MCP 客户端配置
+
+本服务器支持所有兼容 MCP 协议的客户端。以下是 Claude Desktop 的配置示例：
 
 编辑配置文件：
 
@@ -97,6 +99,8 @@ npm list -g @erliban/ssh-mcp-server
   }
 }
 ```
+
+> 其他 MCP 客户端的配置方法请参考各自的文档说明。
 
 ---
 

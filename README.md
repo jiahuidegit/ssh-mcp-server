@@ -52,7 +52,7 @@ npm run build
 
 ### If using npx (Recommended)
 
-npx automatically uses the latest version, just restart Claude Desktop:
+npx automatically uses the latest version, just restart your MCP client:
 
 ```bash
 # No manual update needed, npx always fetches latest
@@ -77,7 +77,9 @@ npm list -g @erliban/ssh-mcp-server
 
 ---
 
-## 🎮 Configure Claude Desktop
+## 🎮 MCP Client Configuration
+
+This server supports all MCP-compatible clients. Here's an example with Claude Desktop:
 
 Edit the configuration file:
 
@@ -97,6 +99,8 @@ Edit the configuration file:
   }
 }
 ```
+
+> For other MCP clients, please refer to their respective documentation for configuration methods.
 
 ---
 
