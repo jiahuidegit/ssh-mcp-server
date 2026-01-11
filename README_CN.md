@@ -48,6 +48,35 @@ npm run build
 
 ---
 
+## 🔄 更新到最新版本
+
+### 如果使用 npx（推荐）
+
+npx 会自动使用最新版本，只需重启 Claude Desktop：
+
+```bash
+# 无需手动更新，npx 总是获取最新版本
+npx @erliban/ssh-mcp-server
+```
+
+### 如果全局安装
+
+```bash
+# 更新到最新版本
+npm update -g @erliban/ssh-mcp-server
+
+# 或者重新安装
+npm install -g @erliban/ssh-mcp-server@latest
+```
+
+### 查看当前版本
+
+```bash
+npm list -g @erliban/ssh-mcp-server
+```
+
+---
+
 ## 🎮 配置 Claude Desktop
 
 编辑配置文件：

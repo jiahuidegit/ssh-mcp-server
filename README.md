@@ -48,6 +48,35 @@ npm run build
 
 ---
 
+## 🔄 Update to Latest Version
+
+### If using npx (Recommended)
+
+npx automatically uses the latest version, just restart Claude Desktop:
+
+```bash
+# No manual update needed, npx always fetches latest
+npx @erliban/ssh-mcp-server
+```
+
+### If globally installed
+
+```bash
+# Update to latest version
+npm update -g @erliban/ssh-mcp-server
+
+# Or reinstall
+npm install -g @erliban/ssh-mcp-server@latest
+```
+
+### Check current version
+
+```bash
+npm list -g @erliban/ssh-mcp-server
+```
+
+---
+
 ## 🎮 Configure Claude Desktop
 
 Edit the configuration file:
