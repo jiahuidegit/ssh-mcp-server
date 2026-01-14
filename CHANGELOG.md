@@ -11,6 +11,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- 🐛 **修复重连失败问题** - 解决连接断开后 `reconnect()` 报错"配置不存在"的问题
+
+### Changed
+- ⚡ **架构优化：配置与状态分离** - 将连接配置和连接状态完全分离
+  - 新增独立的 `configCache` 缓存连接配置
+  - 连接断开时仅清理连接状态，保留配置信息
+  - 支持断开后任意时间重连，无需重新输入密码/私钥
+- 📦 **新增配置管理 API**:
+  - `getCachedConfig()` - 获取缓存的连接配置
+  - `listCachedConfigs()` - 列出所有缓存配置
+  - `clearConfigCache()` - 清除指定配置缓存
+  - `clearAllConfigCache()` - 清空所有配置缓存
+  - `getConfigCacheSize()` - 查看配置缓存大小
+
 ---
 
 ## [0.2.2] - 2025-01-11

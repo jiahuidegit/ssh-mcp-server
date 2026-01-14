@@ -15,10 +15,9 @@ import {
 import { getConnectionKey, withTimeout } from '../utils/index.js';
 import { AuditLogger } from '../logging/audit-logger.js';
 
-/** SSH 连接包装器 */
+/** SSH 连接包装器（只存状态） */
 interface SSHConnection {
   client: Client;
-  config: ConnectOptions;
   connectedAt: Date;
   lastActivity: Date;
   isHealthy: boolean; // 连接健康状态
@@ -29,9 +28,14 @@ interface SSHConnection {
 /**
  * SSH 连接管理器
  * 实现连接池复用，自动清理空闲连接
+ *
+ * 优化：配置和连接状态分离
+ * - connections: 只存活跃连接状态（断开自动清理）
+ * - configCache: 持久化连接配置（断开后仍保留，支持重连）
  */
 export class SSHManager {
   private connections: Map<string, SSHConnection> = new Map();
+  private configCache: Map<string, ConnectOptions> = new Map(); // 配置缓存（独立存储）
   private cleanupTimer?: NodeJS.Timeout;
   private healthCheckTimer?: NodeJS.Timeout; // 健康检查定时器
   private config: MCPServerConfig;
@@ -51,6 +55,9 @@ export class SSHManager {
    */
   async connect(options: ConnectOptions): Promise<ConnectionStatus> {
     const key = getConnectionKey(options.host, options.port ?? 22, options.username);
+
+    // 先缓存配置（无论是否已连接）
+    this.configCache.set(key, options);
 
     // 检查是否已有连接
     const existing = this.connections.get(key);
@@ -191,7 +198,6 @@ export class SSHManager {
       const now = new Date();
       this.connections.set(key, {
         client,
-        config: options,
         connectedAt: now,
         lastActivity: now,
         isHealthy: true,
@@ -242,19 +248,21 @@ export class SSHManager {
    */
   async reconnect(host: string, port: number, username: string): Promise<ConnectionStatus> {
     const key = getConnectionKey(host, port, username);
-    const conn = this.connections.get(key);
 
-    if (!conn) {
+    // 从配置缓存获取原始配置
+    const cachedConfig = this.configCache.get(key);
+
+    if (!cachedConfig) {
       throw new SSHError(
         SSHErrorCode.NOT_CONNECTED,
-        '无法重连：连接配置不存在'
+        '无法重连：连接配置不存在（未曾连接过此服务器，或配置已过期）'
       );
     }
 
-    // 先断开旧连接
+    // 先断开旧连接（如果存在）
     await this.disconnectByKey(key);
 
-    // 使用原有配置重新连接
+    // 使用缓存的配置重新连接
     let attempts = 0;
     const maxAttempts = this.config.maxReconnectAttempts;
 
@@ -267,7 +275,7 @@ export class SSHManager {
           maxAttempts,
         });
 
-        const status = await this.connect(conn.config);
+        const status = await this.connect(cachedConfig);
         this.logger.log('info', 'ssh_reconnect_success', {
           server: key,
           attempts,
@@ -349,7 +357,20 @@ export class SSHManager {
    */
   getStatus(key: string): ConnectionStatus {
     const conn = this.connections.get(key);
+    const cachedConfig = this.configCache.get(key);
+
     if (!conn) {
+      // 连接已断开，但可能还有缓存配置
+      if (cachedConfig) {
+        return {
+          connected: false,
+          host: cachedConfig.host,
+          port: cachedConfig.port ?? 22,
+          username: cachedConfig.username,
+        };
+      }
+
+      // 完全没有信息，从 key 解析
       const [userHost, portStr] = key.split(':');
       const [username, host] = userHost?.split('@') ?? ['', ''];
       return {
@@ -360,11 +381,12 @@ export class SSHManager {
       };
     }
 
+    // 连接存在，返回详细状态
     return {
       connected: true,
-      host: conn.config.host,
-      port: conn.config.port ?? 22,
-      username: conn.config.username,
+      host: cachedConfig?.host ?? '',
+      port: cachedConfig?.port ?? 22,
+      username: cachedConfig?.username ?? '',
       connectedAt: conn.connectedAt,
       lastActivity: conn.lastActivity,
     };
@@ -480,5 +502,51 @@ export class SSHManager {
       clearInterval(this.healthCheckTimer);
     }
     await this.disconnect();
+    // 注意：不清空 configCache，保留配置用于下次启动
+  }
+
+  // ============ 配置缓存管理（新增） ============
+
+  /**
+   * 获取缓存的连接配置
+   */
+  getCachedConfig(host: string, port: number, username: string): ConnectOptions | undefined {
+    const key = getConnectionKey(host, port, username);
+    return this.configCache.get(key);
+  }
+
+  /**
+   * 列出所有缓存的配置
+   */
+  listCachedConfigs(): Array<{ key: string; config: ConnectOptions }> {
+    return Array.from(this.configCache.entries()).map(([key, config]) => ({
+      key,
+      config,
+    }));
+  }
+
+  /**
+   * 手动清除指定配置缓存
+   */
+  clearConfigCache(host: string, port: number, username: string): boolean {
+    const key = getConnectionKey(host, port, username);
+    return this.configCache.delete(key);
+  }
+
+  /**
+   * 清空所有配置缓存
+   */
+  clearAllConfigCache(): void {
+    this.configCache.clear();
+    this.logger.log('info', 'config_cache_cleared', {
+      message: '已清空所有配置缓存',
+    });
+  }
+
+  /**
+   * 检查配置缓存大小（用于调试）
+   */
+  getConfigCacheSize(): number {
+    return this.configCache.size;
   }
 }
