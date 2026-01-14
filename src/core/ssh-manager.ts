@@ -184,7 +184,7 @@ export class SSHManager {
 
           // 启用 debug 模式（仅在 debug 级别时）
           if (this.config.logLevel === 'debug') {
-            connectConfig.debug = (msg: string) => {
+            connectConfig.debug = (msg: string): void => {
               this.logger.log('debug', 'ssh_debug', { server: key, message: msg });
             };
           }

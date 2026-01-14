@@ -10,7 +10,7 @@ import { ExecResult, BatchExecResult } from '../types/index.js';
 // 危险命令模式列表
 const DANGEROUS_PATTERNS = [
   // 删除根目录或系统目录
-  { pattern: /rm\s+(-[rf]+\s+)*[\/]\s*$/, desc: '删除根目录' },
+  { pattern: /rm\s+(-[rf]+\s+)*[/]\s*$/, desc: '删除根目录' },
   { pattern: /rm\s+(-[rf]+\s+)*\/\*/, desc: '删除根目录下所有文件' },
   { pattern: /rm\s+(-[rf]+\s+)*\/(etc|usr|var|bin|sbin|boot|lib|lib64|proc|sys|dev|root|home)\b/, desc: '删除系统关键目录' },
   // 格式化磁盘
