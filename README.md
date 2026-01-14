@@ -22,6 +22,25 @@
 
 ---
 
+## 🆕 What's New
+
+### v0.3.0 (Latest)
+
+- 🔄 **Improved Reconnection Mechanism** - Fixed "configuration not found" error after disconnection
+- 💾 **Configuration & State Separation** - Connection configs persist after disconnection, enabling seamless reconnection
+- 📦 **New Configuration APIs** - `getCachedConfig()`, `listCachedConfigs()`, `clearConfigCache()`, etc.
+- ⚡ **No Password Re-entry** - Reconnect anytime without re-entering credentials
+
+### v0.2.2
+
+- ⏱️ **Long Timeout Support** - Added `longCommandTimeout` (30 min) for docker build, etc.
+- 💓 **Connection Health Check** - Heartbeat detection every 30 seconds
+- 🔄 **Auto Reconnection** - Exponential backoff retry strategy (max 3 attempts)
+
+[View Full Changelog](CHANGELOG.md) | [All Releases](https://github.com/jiahuidegit/ssh-mcp-server/releases)
+
+---
+
 ## 📦 Quick Start
 
 ### Option 1: Run with npx (Recommended)
