@@ -1,11 +1,14 @@
 # SSH MCP Server
 
+[![GitHub Stars](https://img.shields.io/github/stars/jiahuidegit/ssh-mcp-server?style=social)](https://github.com/jiahuidegit/ssh-mcp-server)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Node.js](https://img.shields.io/badge/Node.js-20+-green.svg)](https://nodejs.org/)
 [![npm version](https://img.shields.io/npm/v/@erliban/ssh-mcp-server.svg)](https://www.npmjs.com/package/@erliban/ssh-mcp-server)
 [![npm downloads](https://img.shields.io/npm/dm/@erliban/ssh-mcp-server.svg)](https://www.npmjs.com/package/@erliban/ssh-mcp-server)
 
 **🔐 A secure remote server management tool based on MCP protocol, supporting SSH connections, command execution, and SFTP file transfers.**
+
+> ⭐ **If you find this project helpful, please give it a star on [GitHub](https://github.com/jiahuidegit/ssh-mcp-server)!** Your support helps us improve!
 
 [English](README.md) | [中文](README_CN.md)
 
@@ -24,7 +27,12 @@
 
 ## 🆕 What's New
 
-### v0.3.0 (Latest)
+### v0.3.1 (Latest)
+
+- 💡 **Enhanced Error Messages** - All SSH errors now include bilingual (Chinese/English) solutions
+- 📖 **npm Documentation** - Added GitHub repository links for easier contribution
+
+### v0.3.0
 
 - 🔄 **Improved Reconnection Mechanism** - Fixed "configuration not found" error after disconnection
 - 💾 **Configuration & State Separation** - Connection configs persist after disconnection, enabling seamless reconnection

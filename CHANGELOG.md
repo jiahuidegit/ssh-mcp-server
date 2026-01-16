@@ -11,6 +11,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+---
+
+## [0.3.1] - 2026-01-16
+
+### Added
+- 💡 **错误提示增强** - 所有 SSH 错误现在包含中英文对照的解决方案提示
+  - 新增 `src/errors/error-solutions.ts` 模块
+  - 8 个错误码均提供详细的解决建议
+  - 支持 `SSH_CONN_FAILED`、`SSH_AUTH_FAILED`、`SSH_CMD_TIMEOUT` 等所有错误类型
+- 📖 **npm 文档完善** - package.json 添加 `repository`、`homepage`、`bugs` 字段
+- ⭐ **GitHub Star 徽章** - README 添加 Star 徽章，鼓励用户支持项目
+
+### Changed
+- 🔧 **错误处理重构** - 使用统一的 `formatErrorWithSolution()` 函数格式化错误信息
+
+---
+
+## [0.3.0] - 2026-01-15
+
 ### Fixed
 - 🐛 **修复重连失败问题** - 解决连接断开后 `reconnect()` 报错"配置不存在"的问题
 

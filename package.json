@@ -1,12 +1,20 @@
 {
   "name": "@erliban/ssh-mcp-server",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "type": "module",
   "description": "SSH MCP Server - 安全的远程服务器管理工具，支持 SSH 连接、命令执行、SFTP 文件传输",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
     "ssh-mcp-server": "./dist/index.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jiahuidegit/ssh-mcp-server.git"
+  },
+  "homepage": "https://github.com/jiahuidegit/ssh-mcp-server#readme",
+  "bugs": {
+    "url": "https://github.com/jiahuidegit/ssh-mcp-server/issues"
   },
   "scripts": {
     "build": "tsc",

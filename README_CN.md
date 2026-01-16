@@ -1,11 +1,14 @@
 # SSH MCP Server
 
+[![GitHub Stars](https://img.shields.io/github/stars/jiahuidegit/ssh-mcp-server?style=social)](https://github.com/jiahuidegit/ssh-mcp-server)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Node.js](https://img.shields.io/badge/Node.js-20+-green.svg)](https://nodejs.org/)
 [![npm version](https://img.shields.io/npm/v/@erliban/ssh-mcp-server.svg)](https://www.npmjs.com/package/@erliban/ssh-mcp-server)
 [![npm downloads](https://img.shields.io/npm/dm/@erliban/ssh-mcp-server.svg)](https://www.npmjs.com/package/@erliban/ssh-mcp-server)
 
 **🔐 基于 MCP 协议的安全远程服务器管理工具，支持 SSH 连接、命令执行、SFTP 文件传输**
+
+> ⭐ **觉得有用？请在 [GitHub](https://github.com/jiahuidegit/ssh-mcp-server) 上点个 Star 支持一下！** 您的支持是我们前进的动力！
 
 [English](README.md) | [中文](README_CN.md)
 
@@ -24,7 +27,12 @@
 
 ## 🆕 最近更新
 
-### v0.3.0（最新版）
+### v0.3.1（最新版）
+
+- 💡 **错误提示增强** - 所有 SSH 错误现在包含中英文对照的解决方案
+- 📖 **npm 文档完善** - 添加 GitHub 仓库链接，方便贡献和反馈
+
+### v0.3.0
 
 - 🔄 **优化重连机制** - 修复断开连接后重连报错"配置不存在"的问题
 - 💾 **配置与状态分离** - 连接配置持久化保留，断开后仍可随时重连

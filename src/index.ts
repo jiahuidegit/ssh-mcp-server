@@ -12,7 +12,7 @@ import {
   Tool,
 } from '@modelcontextprotocol/sdk/types.js';
 
-import { MCPServerConfig, DEFAULT_CONFIG, SSHError } from './types/index.js';
+import { MCPServerConfig, DEFAULT_CONFIG } from './types/index.js';
 import { getEnvConfig } from './utils/index.js';
 
 // 核心模块
@@ -33,6 +33,9 @@ import { ServerTools, SaveServerSchema, ListServersSchema, RemoveServerSchema } 
 import { ExecTools, ExecSchema, ExecSudoSchema, ExecBatchSchema } from './tools/exec.js';
 import { SftpTools, SftpLsSchema, SftpUploadSchema, SftpDownloadSchema, SftpMkdirSchema, SftpRmSchema } from './tools/sftp.js';
 import { SystemTools, HealthCheckSchema, GetLogsSchema } from './tools/system.js';
+
+// 错误处理
+import { formatErrorWithSolution } from './errors/error-solutions.js';
 
 /**
  * SSH MCP Server 主类
@@ -134,11 +137,8 @@ class SSHMCPServer {
           content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
         };
       } catch (error) {
-        const errorMessage = error instanceof SSHError
-          ? `[${error.code}] ${error.message}`
-          : error instanceof Error
-            ? error.message
-            : String(error);
+        // 使用带解决方案的错误格式化
+        const errorMessage = formatErrorWithSolution(error);
 
         return {
           content: [{ type: 'text', text: JSON.stringify({ error: errorMessage }) }],
