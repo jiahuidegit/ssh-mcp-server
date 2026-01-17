@@ -190,6 +190,7 @@ export class CommandExecutor {
 
   /**
    * 获取 SSH 客户端（支持自动重连）
+   * 改进：即使不传 host/username，也能通过缓存配置实现自动重连
    */
   private async getClientWithReconnect(
     host?: string,
@@ -203,16 +204,29 @@ export class CommandExecutor {
       if (
         error instanceof SSHError &&
         error.code === SSHErrorCode.NOT_CONNECTED &&
-        this.config.autoReconnect &&
-        host &&
-        username
+        this.config.autoReconnect
       ) {
-        this.logger.log('info', 'auto_reconnect_triggered', {
-          server: getConnectionKey(host, port ?? 22, username),
-        });
+        // 如果提供了 host/username，直接使用
+        if (host && username) {
+          this.logger.log('info', 'auto_reconnect_triggered', {
+            server: getConnectionKey(host, port ?? 22, username),
+          });
+          await this.sshManager.reconnect(host, port ?? 22, username);
+          return this.getClient(host, port, username);
+        }
 
-        await this.sshManager.reconnect(host, port ?? 22, username);
-        return this.getClient(host, port, username);
+        // 未提供参数时，尝试使用缓存的配置重连
+        const cachedConfigs = this.sshManager.listCachedConfigs();
+        const firstCached = cachedConfigs[0];
+        if (firstCached) {
+          // 使用最近的配置
+          const lastConfig = firstCached.config;
+          this.logger.log('info', 'auto_reconnect_from_cache', {
+            server: getConnectionKey(lastConfig.host, lastConfig.port ?? 22, lastConfig.username),
+          });
+          await this.sshManager.reconnect(lastConfig.host, lastConfig.port ?? 22, lastConfig.username);
+          return this.getClient(lastConfig.host, lastConfig.port, lastConfig.username);
+        }
       }
       throw error;
     }
