@@ -3,7 +3,7 @@
  * 负责 SSH 连接的建立、复用和生命周期管理
  */
 
-import { Client, ConnectConfig } from 'ssh2';
+import { Client, ConnectConfig, ClientChannel } from 'ssh2';
 import {
   ConnectOptions,
   ConnectionStatus,
@@ -25,6 +25,15 @@ interface SSHConnection {
   isManualDisconnect: boolean; // 是否为主动断开（用于区分异常断开）
 }
 
+/** 持久化 Shell 会话 */
+export interface ShellSession {
+  stream: ClientChannel;
+  buffer: string; // 输出缓冲区
+  ready: boolean; // 是否已就绪（收到提示符）
+  createdAt: Date;
+  lastActivity: Date;
+}
+
 /**
  * SSH 连接管理器
  * 实现连接池复用，自动清理空闲连接
@@ -36,6 +45,7 @@ interface SSHConnection {
 export class SSHManager {
   private connections: Map<string, SSHConnection> = new Map();
   private configCache: Map<string, ConnectOptions> = new Map(); // 配置缓存（独立存储）
+  private shellSessions: Map<string, ShellSession> = new Map(); // 持久化 shell 会话
   private cleanupTimer?: NodeJS.Timeout;
   private healthCheckTimer?: NodeJS.Timeout; // 健康检查定时器
   private config: MCPServerConfig;
@@ -311,6 +321,13 @@ export class SSHManager {
    * 根据 key 断开连接
    */
   private async disconnectByKey(key: string): Promise<void> {
+    // 先关闭 shell 会话
+    const shell = this.shellSessions.get(key);
+    if (shell) {
+      shell.stream.end();
+      this.shellSessions.delete(key);
+    }
+
     const conn = this.connections.get(key);
     if (conn) {
       conn.isManualDisconnect = true; // 标记为主动断开
@@ -548,5 +565,237 @@ export class SSHManager {
    */
   getConfigCacheSize(): number {
     return this.configCache.size;
+  }
+
+  // ============ 持久化 Shell 会话管理 ============
+
+  /**
+   * 获取或创建持久化 shell 会话
+   */
+  async getOrCreateShell(
+    host?: string,
+    port?: number,
+    username?: string
+  ): Promise<{ key: string; session: ShellSession; isNew: boolean }> {
+    // 获取连接 key
+    let connKey: string;
+    let client: Client | undefined;
+
+    if (host && username) {
+      connKey = getConnectionKey(host, port ?? 22, username);
+      client = this.getConnection(host, port ?? 22, username);
+    } else {
+      const active = this.getActiveConnection();
+      if (!active) {
+        throw new SSHError(SSHErrorCode.NOT_CONNECTED, '没有可用的 SSH 连接');
+      }
+      connKey = active.key;
+      client = active.client;
+    }
+
+    if (!client) {
+      throw new SSHError(SSHErrorCode.NOT_CONNECTED, '没有可用的 SSH 连接');
+    }
+
+    // 检查是否已有 shell 会话
+    const existing = this.shellSessions.get(connKey);
+    if (existing && existing.ready) {
+      existing.lastActivity = new Date();
+      this.logger.log('debug', 'shell_session_reused', { server: connKey });
+      return { key: connKey, session: existing, isNew: false };
+    }
+
+    // 创建新的 shell 会话
+    const session = await this.createShellSession(client, connKey);
+    this.shellSessions.set(connKey, session);
+    this.logger.log('info', 'shell_session_created', { server: connKey });
+    return { key: connKey, session, isNew: true };
+  }
+
+  /**
+   * 创建 shell 会话
+   */
+  private createShellSession(client: Client, key: string): Promise<ShellSession> {
+    return new Promise((resolve, reject) => {
+      client.shell({ term: 'xterm' }, (err: Error | undefined, stream: ClientChannel) => {
+        if (err) {
+          return reject(new SSHError(SSHErrorCode.CONNECTION_FAILED, `创建 shell 失败: ${err.message}`));
+        }
+
+        const now = new Date();
+        const session: ShellSession = {
+          stream,
+          buffer: '',
+          ready: false,
+          createdAt: now,
+          lastActivity: now,
+        };
+
+        // 监听数据
+        stream.on('data', (data: Buffer) => {
+          const text = data.toString();
+          session.buffer += text;
+          session.lastActivity = new Date();
+
+          // 检测是否就绪（收到提示符）
+          if (!session.ready && this.detectPrompt(session.buffer)) {
+            session.ready = true;
+            this.logger.log('debug', 'shell_session_ready', { server: key });
+          }
+        });
+
+        stream.on('close', () => {
+          this.shellSessions.delete(key);
+          this.logger.log('info', 'shell_session_closed', { server: key });
+        });
+
+        stream.on('error', (streamErr: Error) => {
+          this.logger.log('error', 'shell_session_error', { server: key, error: streamErr.message });
+          this.shellSessions.delete(key);
+        });
+
+        // 等待 shell 就绪
+        const checkReady = (): void => {
+          if (session.ready) {
+            resolve(session);
+          } else {
+            setTimeout(() => {
+              if (session.ready) {
+                resolve(session);
+              } else if (session.buffer.length > 0) {
+                // 有输出但没检测到提示符，也认为就绪
+                session.ready = true;
+                resolve(session);
+              } else {
+                reject(new SSHError(SSHErrorCode.CONNECTION_FAILED, '等待 shell 就绪超时'));
+              }
+            }, 5000);
+          }
+        };
+
+        setTimeout(checkReady, 500);
+      });
+    });
+  }
+
+  /**
+   * 检测提示符
+   */
+  private detectPrompt(text: string): boolean {
+    // 常见提示符模式
+    const patterns = [
+      /[\$#>]\s*$/,           // $ # > 结尾
+      /\]\$\s*$/,             // ]$ 结尾 (bash)
+      /\]#\s*$/,              // ]# 结尾 (root bash)
+      /:~\$\s*$/,             // :~$ 结尾 (debian)
+      /:~#\s*$/,              // :~# 结尾 (debian root)
+      /password[:\s]*$/i,     // 密码提示
+      /login[:\s]*$/i,        // 登录提示
+      /username[:\s]*$/i,     // 用户名提示
+    ];
+    return patterns.some(p => p.test(text));
+  }
+
+  /**
+   * 发送输入到 shell 会话
+   */
+  async shellSend(
+    input: string,
+    host?: string,
+    port?: number,
+    username?: string,
+    options: { waitForPrompt?: boolean; timeout?: number; clearBuffer?: boolean } = {}
+  ): Promise<{ output: string; promptDetected: boolean }> {
+    const { key, session } = await this.getOrCreateShell(host, port, username);
+
+    // 清空缓冲区（可选）
+    if (options.clearBuffer) {
+      session.buffer = '';
+    }
+
+    const bufferBefore = session.buffer.length;
+
+    // 发送输入
+    session.stream.write(input + '\n');
+    session.lastActivity = new Date();
+    this.logger.log('debug', 'shell_send', { server: key, input: input.includes('password') ? '***' : input });
+
+    // 等待输出
+    const timeout = options.timeout ?? 10000;
+    const waitForPrompt = options.waitForPrompt ?? true;
+
+    return new Promise((resolve) => {
+      const startTime = Date.now();
+
+      const checkOutput = (): void => {
+        const elapsed = Date.now() - startTime;
+        const newOutput = session.buffer.slice(bufferBefore);
+        const promptDetected = this.detectPrompt(newOutput);
+
+        if (promptDetected || !waitForPrompt || elapsed >= timeout) {
+          resolve({
+            output: newOutput,
+            promptDetected,
+          });
+        } else {
+          setTimeout(checkOutput, 100);
+        }
+      };
+
+      setTimeout(checkOutput, 200);
+    });
+  }
+
+  /**
+   * 读取 shell 缓冲区
+   */
+  async shellRead(
+    host?: string,
+    port?: number,
+    username?: string,
+    options: { clear?: boolean } = {}
+  ): Promise<string> {
+    const { session } = await this.getOrCreateShell(host, port, username);
+    const output = session.buffer;
+    if (options.clear) {
+      session.buffer = '';
+    }
+    return output;
+  }
+
+  /**
+   * 关闭 shell 会话
+   */
+  async closeShell(host?: string, port?: number, username?: string): Promise<void> {
+    let key: string;
+    if (host && username) {
+      key = getConnectionKey(host, port ?? 22, username);
+    } else {
+      const active = this.getActiveConnection();
+      if (!active) return;
+      key = active.key;
+    }
+
+    const session = this.shellSessions.get(key);
+    if (session) {
+      session.stream.end();
+      this.shellSessions.delete(key);
+      this.logger.log('info', 'shell_session_closed_manual', { server: key });
+    }
+  }
+
+  /**
+   * 获取 shell 会话状态
+   */
+  getShellSession(host?: string, port?: number, username?: string): ShellSession | undefined {
+    let key: string;
+    if (host && username) {
+      key = getConnectionKey(host, port ?? 22, username);
+    } else {
+      const active = this.getActiveConnection();
+      if (!active) return undefined;
+      key = active.key;
+    }
+    return this.shellSessions.get(key);
   }
 }

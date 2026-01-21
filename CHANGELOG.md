@@ -13,6 +13,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.5.0] - 2026-01-21
+
+### Added
+- 🔗 **持久化 Shell 会话 / Persistent Shell Session** - 支持多轮交互场景
+  - 新增 `shell_send` 工具 - 发送输入到持久化 shell 会话
+  - 新增 `shell_read` 工具 - 读取 shell 输出缓冲区
+  - 新增 `shell_close` 工具 - 关闭 shell 会话
+  - 支持堡垒机穿透后的多步认证（输入用户名、密码等）
+  - Shell 会话自动管理，复用已有会话
+  - 新增 `ShellSession` 接口管理会话状态
+  - 改动文件：
+    - `src/core/ssh-manager.ts` - 新增 shell 会话管理功能
+    - `src/tools/exec.ts` - 新增 3 个工具处理器
+    - `src/index.ts` - 注册新工具
+
+---
+
 ## [0.4.0] - 2026-01-21
 
 ### Added

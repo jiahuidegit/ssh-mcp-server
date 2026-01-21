@@ -5,6 +5,7 @@
 
 import { z } from 'zod';
 import { CommandExecutor } from '../core/command-executor.js';
+import { SSHManager } from '../core/ssh-manager.js';
 import { ExecResult, BatchExecResult } from '../types/index.js';
 
 // 危险命令模式列表
@@ -107,11 +108,44 @@ export const ExecShellSchema = z.object({
 
 export type ExecShellParams = z.infer<typeof ExecShellSchema>;
 
+// shell_send 参数 Schema（持久化 shell 交互）
+export const ShellSendSchema = z.object({
+  input: z.string().min(1, '输入不能为空'),
+  host: z.string().optional(),
+  port: z.number().int().min(1).max(65535).optional(),
+  username: z.string().optional(),
+  timeout: z.number().int().min(1000).default(10000),
+  waitForPrompt: z.boolean().default(true), // 是否等待提示符
+  clearBuffer: z.boolean().default(false), // 是否先清空缓冲区
+});
+
+// shell_read 参数 Schema
+export const ShellReadSchema = z.object({
+  host: z.string().optional(),
+  port: z.number().int().min(1).max(65535).optional(),
+  username: z.string().optional(),
+  clear: z.boolean().default(false), // 是否清空缓冲区
+});
+
+// shell_close 参数 Schema
+export const ShellCloseSchema = z.object({
+  host: z.string().optional(),
+  port: z.number().int().min(1).max(65535).optional(),
+  username: z.string().optional(),
+});
+
+export type ShellSendParams = z.infer<typeof ShellSendSchema>;
+export type ShellReadParams = z.infer<typeof ShellReadSchema>;
+export type ShellCloseParams = z.infer<typeof ShellCloseSchema>;
+
 /**
  * 命令执行工具处理器
  */
 export class ExecTools {
-  constructor(private executor: CommandExecutor) {}
+  constructor(
+    private executor: CommandExecutor,
+    private sshManager?: SSHManager
+  ) {}
 
   /**
    * 执行命令
@@ -228,5 +262,55 @@ export class ExecTools {
         promptPattern: params.promptPattern,
       }
     );
+  }
+
+  /**
+   * 发送输入到持久化 shell（用于多轮交互，如堡垒机穿透）
+   */
+  async shellSend(params: ShellSendParams): Promise<{ output: string; promptDetected: boolean }> {
+    if (!this.sshManager) {
+      throw new Error('SSHManager 未初始化');
+    }
+
+    return this.sshManager.shellSend(
+      params.input,
+      params.host,
+      params.port,
+      params.username,
+      {
+        waitForPrompt: params.waitForPrompt,
+        timeout: params.timeout,
+        clearBuffer: params.clearBuffer,
+      }
+    );
+  }
+
+  /**
+   * 读取 shell 缓冲区
+   */
+  async shellRead(params: ShellReadParams): Promise<{ buffer: string }> {
+    if (!this.sshManager) {
+      throw new Error('SSHManager 未初始化');
+    }
+
+    const buffer = await this.sshManager.shellRead(
+      params.host,
+      params.port,
+      params.username,
+      { clear: params.clear }
+    );
+    return { buffer };
+  }
+
+  /**
+   * 关闭持久化 shell 会话
+   */
+  async shellClose(params: ShellCloseParams): Promise<{ success: true; message: string }> {
+    if (!this.sshManager) {
+      throw new Error('SSHManager 未初始化');
+    }
+
+    await this.sshManager.closeShell(params.host, params.port, params.username);
+    return { success: true, message: '已关闭 shell 会话' };
   }
 }

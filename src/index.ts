@@ -30,7 +30,7 @@ import { AuditLogger } from './logging/audit-logger.js';
 // 工具模块
 import { ConnectionTools, ConnectSchema, DisconnectSchema } from './tools/connection.js';
 import { ServerTools, SaveServerSchema, ListServersSchema, RemoveServerSchema } from './tools/server.js';
-import { ExecTools, ExecSchema, ExecSudoSchema, ExecBatchSchema, ExecShellSchema } from './tools/exec.js';
+import { ExecTools, ExecSchema, ExecSudoSchema, ExecBatchSchema, ExecShellSchema, ShellSendSchema, ShellReadSchema, ShellCloseSchema } from './tools/exec.js';
 import { SftpTools, SftpLsSchema, SftpUploadSchema, SftpDownloadSchema, SftpMkdirSchema, SftpRmSchema } from './tools/sftp.js';
 import { SystemTools, HealthCheckSchema, GetLogsSchema } from './tools/system.js';
 
@@ -78,7 +78,7 @@ class SSHMCPServer {
     // 初始化工具处理器
     this.connectionTools = new ConnectionTools(this.sshManager, this.serverStore, this.credentialStore);
     this.serverTools = new ServerTools(this.serverStore, this.credentialStore);
-    this.execTools = new ExecTools(this.commandExecutor);
+    this.execTools = new ExecTools(this.commandExecutor, this.sshManager);
     this.sftpTools = new SftpTools(this.sftpOperator);
     this.systemTools = new SystemTools(this.sshManager, this.logger);
 
@@ -305,6 +305,48 @@ class SSHMCPServer {
           required: ['command'],
         },
       },
+      {
+        name: 'shell_send',
+        description: '发送输入到持久化 shell 会话。用于多轮交互场景，如堡垒机穿透需要输入用户名和密码',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            input: { type: 'string', description: '要发送的输入内容' },
+            host: { type: 'string', description: '服务器地址（可选，默认使用当前连接）' },
+            port: { type: 'number', description: 'SSH 端口' },
+            username: { type: 'string', description: '用户名' },
+            timeout: { type: 'number', description: '等待响应超时时间（毫秒），默认 10000' },
+            waitForPrompt: { type: 'boolean', description: '是否等待提示符出现，默认 true' },
+            clearBuffer: { type: 'boolean', description: '是否先清空缓冲区，默认 false' },
+          },
+          required: ['input'],
+        },
+      },
+      {
+        name: 'shell_read',
+        description: '读取持久化 shell 会话的输出缓冲区',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            host: { type: 'string', description: '服务器地址（可选，默认使用当前连接）' },
+            port: { type: 'number', description: 'SSH 端口' },
+            username: { type: 'string', description: '用户名' },
+            clear: { type: 'boolean', description: '是否清空缓冲区，默认 false' },
+          },
+        },
+      },
+      {
+        name: 'shell_close',
+        description: '关闭持久化 shell 会话',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            host: { type: 'string', description: '服务器地址（可选，默认使用当前连接）' },
+            port: { type: 'number', description: 'SSH 端口' },
+            username: { type: 'string', description: '用户名' },
+          },
+        },
+      },
 
       // SFTP 操作
       {
@@ -441,6 +483,12 @@ class SSHMCPServer {
         return this.execTools.execBatch(ExecBatchSchema.parse(args));
       case 'exec_shell':
         return this.execTools.execShell(ExecShellSchema.parse(args));
+      case 'shell_send':
+        return this.execTools.shellSend(ShellSendSchema.parse(args));
+      case 'shell_read':
+        return this.execTools.shellRead(ShellReadSchema.parse(args));
+      case 'shell_close':
+        return this.execTools.shellClose(ShellCloseSchema.parse(args));
 
       // SFTP 操作
       case 'sftp_ls':
