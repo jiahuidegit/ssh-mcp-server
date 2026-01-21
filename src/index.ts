@@ -30,7 +30,7 @@ import { AuditLogger } from './logging/audit-logger.js';
 // 工具模块
 import { ConnectionTools, ConnectSchema, DisconnectSchema } from './tools/connection.js';
 import { ServerTools, SaveServerSchema, ListServersSchema, RemoveServerSchema } from './tools/server.js';
-import { ExecTools, ExecSchema, ExecSudoSchema, ExecBatchSchema } from './tools/exec.js';
+import { ExecTools, ExecSchema, ExecSudoSchema, ExecBatchSchema, ExecShellSchema } from './tools/exec.js';
 import { SftpTools, SftpLsSchema, SftpUploadSchema, SftpDownloadSchema, SftpMkdirSchema, SftpRmSchema } from './tools/sftp.js';
 import { SystemTools, HealthCheckSchema, GetLogsSchema } from './tools/system.js';
 
@@ -288,6 +288,23 @@ class SSHMCPServer {
           required: ['command', 'servers'],
         },
       },
+      {
+        name: 'exec_shell',
+        description: '通过交互式 shell 模式执行命令。用于不支持 exec 模式的堡垒机穿透场景。危险命令需要用户确认',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            command: { type: 'string', description: '要执行的命令' },
+            host: { type: 'string', description: '服务器地址（可选，默认使用当前连接）' },
+            port: { type: 'number', description: 'SSH 端口' },
+            username: { type: 'string', description: '用户名' },
+            timeout: { type: 'number', description: '命令超时时间（毫秒）' },
+            promptPattern: { type: 'string', description: '自定义 shell 提示符正则表达式（可选）' },
+            confirmed: { type: 'boolean', description: '危险命令确认标志，用户明确同意后设置为 true' },
+          },
+          required: ['command'],
+        },
+      },
 
       // SFTP 操作
       {
@@ -422,6 +439,8 @@ class SSHMCPServer {
         return this.execTools.execSudo(ExecSudoSchema.parse(args));
       case 'exec_batch':
         return this.execTools.execBatch(ExecBatchSchema.parse(args));
+      case 'exec_shell':
+        return this.execTools.execShell(ExecShellSchema.parse(args));
 
       // SFTP 操作
       case 'sftp_ls':

@@ -13,6 +13,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.4.0] - 2026-01-21
+
+### Added
+- 🔗 **Shell 模式执行 / Shell Mode Execution** - 新增 `exec_shell` 工具
+  - 通过交互式 PTY shell 执行命令，用于不支持 exec 模式的堡垒机
+  - Uses interactive PTY shell to execute commands for bastion hosts that don't support exec mode
+  - 支持自定义提示符正则表达式 `promptPattern`
+  - 自动识别命令结束，解析退出码
+  - 新增文件：
+    - `src/core/command-executor.ts` - 新增 `execShell()` 和 `executeCommandShell()` 方法
+    - `src/tools/exec.ts` - 新增 `ExecShellSchema` 和 `execShell()` 处理器
+    - `src/index.ts` - 注册 `exec_shell` 工具
+
+---
+
 ## [0.3.1] - 2026-01-16
 
 ### Added

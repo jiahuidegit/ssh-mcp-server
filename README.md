@@ -27,7 +27,14 @@
 
 ## 🆕 What's New
 
-### v0.3.1 (Latest)
+### v0.4.0 (Latest)
+
+- 🔗 **Shell Mode Execution** - New `exec_shell` tool for bastion hosts that don't support exec mode
+  - Uses interactive PTY shell to execute commands
+  - Perfect for jump server / bastion host scenarios
+  - Supports custom prompt pattern for different shell environments
+
+### v0.3.1
 
 - 💡 **Enhanced Error Messages** - All SSH errors now include bilingual (Chinese/English) solutions
 - 📖 **npm Documentation** - Added GitHub repository links for easier contribution
@@ -170,6 +177,7 @@ Edit the configuration file:
 | `exec` | Execute remote command |
 | `exec_sudo` | Execute with sudo privileges |
 | `exec_batch` | Batch execute on multiple servers |
+| `exec_shell` | Execute via interactive shell (for bastion hosts) |
 
 ### SFTP Operations
 

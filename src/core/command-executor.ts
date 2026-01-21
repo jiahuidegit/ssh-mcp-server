@@ -317,4 +317,146 @@ export class CommandExecutor {
     // 隐藏 echo '...' | sudo -S 中的密码
     return command.replace(/echo\s+'[^']*'\s*\|\s*sudo/g, "echo '***' | sudo");
   }
+
+  /**
+   * 通过 shell 模式执行命令（用于不支持 exec 的堡垒机）
+   * 原理：分配 PTY，通过 stdin/stdout 交互，识别提示符判断命令结束
+   */
+  async execShell(
+    command: string,
+    host?: string,
+    port?: number,
+    username?: string,
+    options: ExecOptions & { promptPattern?: string } = {}
+  ): Promise<ExecResult> {
+    const client = await this.getClientWithReconnect(host, port, username);
+    const serverKey = this.getServerKey(host, port, username);
+    const timeout = options.timeout || this.config.commandTimeout;
+    const startTime = Date.now();
+
+    try {
+      const result = await withTimeout(
+        this.executeCommandShell(client, command, options),
+        timeout,
+        `命令执行超时 (${timeout}ms)`
+      );
+
+      const duration = Date.now() - startTime;
+      this.logger.log('info', 'command_exec_shell', {
+        server: serverKey,
+        command: this.maskCommand(command),
+        duration,
+      });
+
+      return { ...result, duration };
+    } catch (error) {
+      const duration = Date.now() - startTime;
+      const message = error instanceof Error ? error.message : String(error);
+
+      this.logger.log('error', 'command_exec_shell', {
+        server: serverKey,
+        command: this.maskCommand(command),
+        error: message,
+        duration,
+      });
+
+      throw new SSHError(SSHErrorCode.CONNECTION_FAILED, `Shell 命令执行失败: ${message}`, error);
+    }
+  }
+
+  /**
+   * Shell 模式执行命令的底层实现
+   */
+  private executeCommandShell(
+    client: Client,
+    command: string,
+    options: ExecOptions & { promptPattern?: string }
+  ): Promise<ExecResult> {
+    return new Promise((resolve, reject) => {
+      // 请求 PTY 并启动 shell
+      client.shell({ term: 'xterm' }, (err: Error | undefined, stream: ClientChannel) => {
+        if (err) {
+          return reject(err);
+        }
+
+        let output = '';
+        let commandSent = false;
+        let commandStarted = false;
+
+        // 默认提示符模式：匹配常见的 shell 提示符
+        // 如 [user@host ~]$ 或 user@host:~$ 或 # 或 $
+        const promptPattern: RegExp = options.promptPattern
+          ? new RegExp(options.promptPattern)
+          : /[\$#]\s*$/;
+
+        // 用于标记命令结束的唯一标识
+        const endMarker = `__CMD_END_${Date.now()}__`;
+
+        stream.on('data', (data: Buffer) => {
+          const text = data.toString();
+          output += text;
+
+          // 等待初始提示符出现后发送命令
+          if (!commandSent && promptPattern.test(output)) {
+            commandSent = true;
+            // 发送命令，并在最后加上 echo 标记来判断命令结束
+            stream.write(`${command}; echo "${endMarker}" $?\n`);
+            commandStarted = true;
+            output = ''; // 清空之前的输出
+          }
+
+          // 检测命令是否执行完毕（通过结束标记）
+          if (commandStarted && output.includes(endMarker)) {
+            stream.end();
+          }
+        });
+
+        stream.on('close', () => {
+          // 解析输出和退出码
+          const lines = output.split('\n');
+          let exitCode = 0;
+          let stdout = '';
+
+          // 查找结束标记行，提取退出码
+          for (let i = 0; i < lines.length; i++) {
+            const line = lines[i] ?? '';
+            if (line.includes(endMarker)) {
+              // 提取退出码
+              const match = line.match(new RegExp(`${endMarker}\\s*(\\d+)`));
+              if (match && match[1]) {
+                exitCode = parseInt(match[1], 10);
+              }
+              // 结束标记之前的是输出
+              stdout = lines.slice(1, i).join('\n'); // 跳过第一行（命令本身的回显）
+              break;
+            }
+          }
+
+          // 如果没找到标记，返回全部输出
+          if (!stdout && output) {
+            stdout = output;
+          }
+
+          resolve({
+            stdout: stdout.trim(),
+            stderr: '', // shell 模式下 stderr 混在 stdout 里
+            exitCode,
+            duration: 0,
+          });
+        });
+
+        stream.on('error', (streamErr: Error) => {
+          reject(streamErr);
+        });
+
+        // 超时保护：如果一直没有提示符出现
+        setTimeout(() => {
+          if (!commandSent) {
+            stream.end();
+            reject(new Error('等待 shell 提示符超时'));
+          }
+        }, 10000);
+      });
+    });
+  }
 }

@@ -92,6 +92,21 @@ export type ExecParams = z.infer<typeof ExecSchema>;
 export type ExecSudoParams = z.infer<typeof ExecSudoSchema>;
 export type ExecBatchParams = z.infer<typeof ExecBatchSchema>;
 
+// exec_shell 参数 Schema（用于不支持 exec 的堡垒机）
+export const ExecShellSchema = z.object({
+  command: z.string().min(1, '命令不能为空'),
+  host: z.string().optional(),
+  port: z.number().int().min(1).max(65535).optional(),
+  username: z.string().optional(),
+  timeout: z.number().int().min(1000).optional(),
+  // 自定义提示符正则（可选，默认匹配 $ 或 #）
+  promptPattern: z.string().optional(),
+  // 确认参数：危险命令需要用户确认后设置为 true
+  confirmed: z.boolean().optional(),
+});
+
+export type ExecShellParams = z.infer<typeof ExecShellSchema>;
+
 /**
  * 命令执行工具处理器
  */
@@ -188,5 +203,30 @@ export class ExecTools {
       { timeout: params.timeout }
     );
     return { results };
+  }
+
+  /**
+   * 通过 shell 模式执行命令（用于不支持 exec 的堡垒机）
+   */
+  async execShell(params: ExecShellParams): Promise<ExecResult | { warning: string; requireConfirmation: true }> {
+    // 危险命令检测
+    const danger = detectDangerousCommand(params.command);
+    if (danger && !params.confirmed) {
+      return {
+        warning: `⚠️ 检测到危险命令: ${danger}\n命令: ${params.command}\n\n此命令可能对服务器造成不可恢复的损害！如果确定要执行，请用户确认后重新调用并设置 confirmed: true`,
+        requireConfirmation: true,
+      };
+    }
+
+    return this.executor.execShell(
+      params.command,
+      params.host,
+      params.port,
+      params.username,
+      {
+        timeout: params.timeout,
+        promptPattern: params.promptPattern,
+      }
+    );
   }
 }
