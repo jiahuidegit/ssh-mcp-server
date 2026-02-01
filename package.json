@@ -1,6 +1,6 @@
 {
   "name": "@erliban/ssh-mcp-server",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "type": "module",
   "description": "SSH MCP Server - 安全的远程服务器管理工具，支持 SSH 连接、命令执行、SFTP 文件传输",
   "main": "dist/index.js",

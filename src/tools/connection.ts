@@ -68,6 +68,9 @@ export class ConnectionTools {
         privateKey: credential?.privateKey,
         passphrase: credential?.passphrase,
         timeout: params.timeout,
+        // 传递 alias 和 environment 信息
+        alias: params.alias,
+        environment: serverConfig.environment,
       };
     } else {
       // 直接使用提供的参数
@@ -126,5 +129,28 @@ export class ConnectionTools {
   listConnections(): { connections: unknown[] } {
     const connections = this.sshManager.listConnections();
     return { connections };
+  }
+
+  /**
+   * 列出活跃连接（包含环境信息）
+   */
+  listActiveConnections(): { connections: Array<{ host: string; port: number; username: string; environment?: string; alias?: string; connectedAt?: Date; lastActivity?: Date }> } {
+    const connections = this.sshManager.listConnections();
+
+    // 为每个连接附加环境和别名信息
+    const enrichedConnections = connections.map((conn) => {
+      const identity = this.sshManager.getServerIdentity(conn.host, conn.port, conn.username);
+      return {
+        host: conn.host,
+        port: conn.port,
+        username: conn.username,
+        environment: identity.environment,
+        alias: identity.alias,
+        connectedAt: conn.connectedAt,
+        lastActivity: conn.lastActivity,
+      };
+    });
+
+    return { connections: enrichedConnections };
   }
 }

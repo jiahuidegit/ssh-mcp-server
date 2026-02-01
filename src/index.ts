@@ -14,6 +14,7 @@ import {
 
 import { MCPServerConfig, DEFAULT_CONFIG } from './types/index.js';
 import { getEnvConfig } from './utils/index.js';
+import { ConfirmationManager } from './utils/confirmation-manager.js';
 
 // 核心模块
 import { SSHManager } from './core/ssh-manager.js';
@@ -51,6 +52,7 @@ class SSHMCPServer {
   private sftpOperator: SFTPOperator;
   private serverStore: ServerStore;
   private credentialStore: CredentialStore;
+  private confirmationManager: ConfirmationManager;
 
   // 工具处理器
   private connectionTools: ConnectionTools;
@@ -68,7 +70,10 @@ class SSHMCPServer {
 
     // 初始化存储
     this.serverStore = new ServerStore(this.config);
-    this.credentialStore = new CredentialStore(this.config);
+    this.credentialStore = new CredentialStore(this.config, this.logger);
+
+    // 初始化确认管理器
+    this.confirmationManager = new ConfirmationManager();
 
     // 初始化核心模块
     this.sshManager = new SSHManager(this.config, this.logger);
@@ -77,8 +82,8 @@ class SSHMCPServer {
 
     // 初始化工具处理器
     this.connectionTools = new ConnectionTools(this.sshManager, this.serverStore, this.credentialStore);
-    this.serverTools = new ServerTools(this.serverStore, this.credentialStore);
-    this.execTools = new ExecTools(this.commandExecutor, this.sshManager);
+    this.serverTools = new ServerTools(this.serverStore, this.credentialStore, this.confirmationManager);
+    this.execTools = new ExecTools(this.commandExecutor, this.sshManager, this.confirmationManager);
     this.sftpTools = new SftpTools(this.sftpOperator);
     this.systemTools = new SystemTools(this.sshManager, this.logger);
 
@@ -198,7 +203,7 @@ class SSHMCPServer {
       },
       {
         name: 'save_server',
-        description: '保存服务器配置',
+        description: '保存服务器配置。覆盖现有配置时需要先获取 confirmationToken。强烈建议设置 environment 字段以防止误操作生产服务器。',
         inputSchema: {
           type: 'object',
           properties: {
@@ -210,18 +215,22 @@ class SSHMCPServer {
             password: { type: 'string', description: '密码（authType=password 时）' },
             privateKey: { type: 'string', description: '私钥内容（authType=privateKey 时）' },
             passphrase: { type: 'string', description: '私钥密码' },
+            environment: { type: 'string', enum: ['production', 'staging', 'test', 'development'], description: '环境标签（强烈建议设置，用于防止误操作生产服务器）' },
+            description: { type: 'string', description: '服务器描述' },
             group: { type: 'string', description: '服务器分组' },
+            confirmationToken: { type: 'string', description: '覆盖现有配置时需要的确认 token（首次调用会返回 token，使用 token 再次调用以确认）' },
           },
           required: ['alias', 'host', 'username', 'authType'],
         },
       },
       {
         name: 'remove_server',
-        description: '删除已保存的服务器配置',
+        description: '删除已保存的服务器配置。删除任何服务器都需要先获取 confirmationToken，生产环境服务器会有特别警告。',
         inputSchema: {
           type: 'object',
           properties: {
             alias: { type: 'string', description: '服务器别名' },
+            confirmationToken: { type: 'string', description: '删除确认 token（首次调用会返回 token，使用 token 再次调用以确认删除）' },
           },
           required: ['alias'],
         },
@@ -230,41 +239,43 @@ class SSHMCPServer {
       // 命令执行
       {
         name: 'exec',
-        description: '在远程服务器执行命令。危险命令（如 rm -rf /）需要用户确认',
+        description: '在远程服务器执行命令。⚠️ 重要：执行命令前请先调用 list_active_connections 确认要操作的服务器和环境（production/staging/test）。危险命令（如删除、容器、数据库操作）需要先获取 confirmationToken。命令执行结果会包含服务器身份信息（server.host、server.environment、server.alias）。',
         inputSchema: {
           type: 'object',
           properties: {
             command: { type: 'string', description: '要执行的命令' },
-            host: { type: 'string', description: '服务器地址（可选，默认使用当前连接）' },
+            host: { type: 'string', description: '服务器地址。⚠️ 如果有多个活跃连接，必须明确指定服务器，建议先调用 list_active_connections 查看' },
             port: { type: 'number', description: 'SSH 端口' },
             username: { type: 'string', description: '用户名' },
             timeout: { type: 'number', description: '命令超时时间（毫秒）' },
+            useLongTimeout: { type: 'boolean', description: '使用长超时（30分钟），适用于 docker build 等耗时操作' },
             cwd: { type: 'string', description: '工作目录' },
-            confirmed: { type: 'boolean', description: '危险命令确认标志，用户明确同意后设置为 true' },
+            confirmationToken: { type: 'string', description: '危险命令确认 token（首次调用危险命令会返回 token 和警告，使用 token 再次调用以确认执行）' },
           },
           required: ['command'],
         },
       },
       {
         name: 'exec_sudo',
-        description: '以 sudo 权限执行命令。危险命令需要用户确认',
+        description: '以 sudo 权限执行命令。⚠️ 重要：执行前请先调用 list_active_connections 确认要操作的服务器和环境。危险命令需要先获取 confirmationToken。',
         inputSchema: {
           type: 'object',
           properties: {
             command: { type: 'string', description: '要执行的命令' },
             sudoPassword: { type: 'string', description: 'sudo 密码' },
-            host: { type: 'string', description: '服务器地址' },
+            host: { type: 'string', description: '服务器地址。⚠️ 如果有多个活跃连接，必须明确指定' },
             port: { type: 'number', description: 'SSH 端口' },
             username: { type: 'string', description: '用户名' },
             timeout: { type: 'number', description: '命令超时时间（毫秒）' },
-            confirmed: { type: 'boolean', description: '危险命令确认标志，用户明确同意后设置为 true' },
+            useLongTimeout: { type: 'boolean', description: '使用长超时（30分钟）' },
+            confirmationToken: { type: 'string', description: '危险命令确认 token（首次调用危险命令会返回 token，使用 token 再次调用以确认）' },
           },
           required: ['command', 'sudoPassword'],
         },
       },
       {
         name: 'exec_batch',
-        description: '在多台服务器批量执行命令。危险命令需要用户确认',
+        description: '在多台服务器批量执行命令。🚨 批量操作风险极高！执行前必须：1. 仔细检查服务器列表和环境标签；2. 确认命令正确性；3. 包含生产环境服务器时会有特别警告。危险命令需要先获取 confirmationToken。',
         inputSchema: {
           type: 'object',
           properties: {
@@ -280,44 +291,45 @@ class SSHMCPServer {
                 },
                 required: ['host', 'username'],
               },
-              description: '服务器列表',
+              description: '服务器列表（每个服务器执行结果会包含环境信息）',
             },
             timeout: { type: 'number', description: '命令超时时间（毫秒）' },
-            confirmed: { type: 'boolean', description: '危险命令确认标志，用户明确同意后设置为 true' },
+            confirmationToken: { type: 'string', description: '危险命令确认 token（首次调用危险命令会返回 token 和警告，使用 token 再次调用以确认）' },
           },
           required: ['command', 'servers'],
         },
       },
       {
         name: 'exec_shell',
-        description: '通过交互式 shell 模式执行命令。用于不支持 exec 模式的堡垒机穿透场景。危险命令需要用户确认',
+        description: '通过交互式 shell 模式执行命令。用于不支持 exec 模式的堡垒机穿透场景。⚠️ 执行前请先调用 list_active_connections 确认服务器。危险命令需要先获取 confirmationToken。',
         inputSchema: {
           type: 'object',
           properties: {
             command: { type: 'string', description: '要执行的命令' },
-            host: { type: 'string', description: '服务器地址（可选，默认使用当前连接）' },
+            host: { type: 'string', description: '服务器地址。⚠️ 如果有多个活跃连接，必须明确指定' },
             port: { type: 'number', description: 'SSH 端口' },
             username: { type: 'string', description: '用户名' },
             timeout: { type: 'number', description: '命令超时时间（毫秒）' },
             promptPattern: { type: 'string', description: '自定义 shell 提示符正则表达式（可选）' },
-            confirmed: { type: 'boolean', description: '危险命令确认标志，用户明确同意后设置为 true' },
+            confirmationToken: { type: 'string', description: '危险命令确认 token（首次调用危险命令会返回 token，使用 token 再次调用以确认）' },
           },
           required: ['command'],
         },
       },
       {
         name: 'shell_send',
-        description: '发送输入到持久化 shell 会话。用于多轮交互场景，如堡垒机穿透需要输入用户名和密码',
+        description: '发送输入到持久化 shell 会话。用于多轮交互场景，如堡垒机穿透需要输入用户名和密码。⚠️ 也会检测危险命令，防止绕过 exec 的安全检查。',
         inputSchema: {
           type: 'object',
           properties: {
             input: { type: 'string', description: '要发送的输入内容' },
-            host: { type: 'string', description: '服务器地址（可选，默认使用当前连接）' },
+            host: { type: 'string', description: '服务器地址。⚠️ 如果有多个活跃连接，必须明确指定' },
             port: { type: 'number', description: 'SSH 端口' },
             username: { type: 'string', description: '用户名' },
             timeout: { type: 'number', description: '等待响应超时时间（毫秒），默认 10000' },
             waitForPrompt: { type: 'boolean', description: '是否等待提示符出现，默认 true' },
             clearBuffer: { type: 'boolean', description: '是否先清空缓冲区，默认 false' },
+            confirmationToken: { type: 'string', description: '危险命令确认 token（如果输入内容是危险命令，首次调用会返回 token）' },
           },
           required: ['input'],
         },
@@ -452,6 +464,14 @@ class SSHMCPServer {
           },
         },
       },
+      {
+        name: 'list_active_connections',
+        description: '列出当前所有活跃的 SSH 连接，包含服务器环境标签（production/staging/test/development）和别名信息，帮助 AI 识别当前连接的是哪些服务器',
+        inputSchema: {
+          type: 'object',
+          properties: {},
+        },
+      },
     ];
   }
 
@@ -507,6 +527,8 @@ class SSHMCPServer {
         return this.systemTools.healthCheck(HealthCheckSchema.parse(args));
       case 'get_logs':
         return this.systemTools.getLogs(GetLogsSchema.parse(args));
+      case 'list_active_connections':
+        return this.connectionTools.listActiveConnections();
 
       default:
         throw new Error(`未知工具: ${name}`);
@@ -548,6 +570,7 @@ class SSHMCPServer {
    */
   private async shutdown(): Promise<void> {
     this.logger.log('info', 'server_shutdown');
+    this.confirmationManager.destroy();
     await this.sshManager.destroy();
     process.exit(0);
   }

@@ -417,6 +417,57 @@ export class SSHManager {
   }
 
   /**
+   * 获取服务器身份信息
+   * 从缓存的配置中提取 alias 和 environment
+   */
+  getServerIdentity(host?: string, port?: number, username?: string): import('../types/index.js').ServerIdentity {
+    let key: string;
+
+    if (host && username) {
+      key = getConnectionKey(host, port ?? 22, username);
+    } else {
+      // 🚨 安全检查：如果有多个活跃连接，禁止使用默认连接
+      const allConnections = this.listConnections();
+
+      if (allConnections.length > 1) {
+        const connectionsList = allConnections
+          .map((conn) => `  - ${conn.username}@${conn.host}:${conn.port}`)
+          .join('\n');
+
+        throw new Error(
+          `🚨 安全提示：当前有 ${allConnections.length} 个活跃连接，为防止误操作，必须明确指定服务器！\n\n当前活跃连接：\n${connectionsList}\n\n请明确指定 host 和 username 参数。`
+        );
+      }
+
+      // 只有一个连接时才允许使用默认连接
+      const active = this.getActiveConnection();
+      if (!active) {
+        throw new Error('没有活动连接且未指定服务器参数');
+      }
+      // 从 active.key 解析信息
+      const parts = active.key.split(':');
+      const [userHost, portStr] = parts;
+      const [user, h] = (userHost ?? '').split('@');
+      return {
+        host: h ?? 'unknown',
+        port: parseInt(portStr ?? '22', 10),
+        username: user ?? 'unknown',
+      };
+    }
+
+    // 从配置缓存获取信息
+    const config = this.configCache.get(key);
+
+    return {
+      host: host ?? 'unknown',
+      port: port ?? 22,
+      username: username ?? 'unknown',
+      environment: config?.environment,
+      alias: config?.alias,
+    };
+  }
+
+  /**
    * 启动空闲连接清理定时器
    */
   private startCleanupTimer(): void {
@@ -585,6 +636,29 @@ export class SSHManager {
       connKey = getConnectionKey(host, port ?? 22, username);
       client = this.getConnection(host, port ?? 22, username);
     } else {
+      // 🚨 安全检查：如果有多个活跃连接，禁止使用默认连接
+      const allConnections = this.listConnections();
+
+      if (allConnections.length > 1) {
+        // 构建错误信息，列出所有连接
+        const connectionsList = allConnections
+          .map((conn) => {
+            const identity = this.getServerIdentity(conn.host, conn.port, conn.username);
+            const envLabel = identity.environment
+              ? ` [${identity.environment.toUpperCase()}]`
+              : '';
+            const aliasLabel = identity.alias ? ` (别名: ${identity.alias})` : '';
+            return `  - ${conn.username}@${conn.host}:${conn.port}${envLabel}${aliasLabel}`;
+          })
+          .join('\n');
+
+        throw new SSHError(
+          SSHErrorCode.NOT_CONNECTED,
+          `🚨 安全提示：当前有 ${allConnections.length} 个活跃连接，为防止误操作，必须明确指定要操作的服务器！\n\n当前活跃连接：\n${connectionsList}\n\n请明确指定 host 和 username 参数。`
+        );
+      }
+
+      // 只有一个连接时才允许使用默认连接
       const active = this.getActiveConnection();
       if (!active) {
         throw new SSHError(SSHErrorCode.NOT_CONNECTED, '没有可用的 SSH 连接');
@@ -684,7 +758,7 @@ export class SSHManager {
   private detectPrompt(text: string): boolean {
     // 常见提示符模式
     const patterns = [
-      /[\$#>]\s*$/,           // $ # > 结尾
+      /[$#>]\s*$/,           // $ # > 结尾
       /\]\$\s*$/,             // ]$ 结尾 (bash)
       /\]#\s*$/,              // ]# 结尾 (root bash)
       /:~\$\s*$/,             // :~$ 结尾 (debian)
@@ -771,6 +845,28 @@ export class SSHManager {
     if (host && username) {
       key = getConnectionKey(host, port ?? 22, username);
     } else {
+      // 🚨 安全检查：如果有多个活跃连接，禁止使用默认连接
+      const allConnections = this.listConnections();
+
+      if (allConnections.length > 1) {
+        const connectionsList = allConnections
+          .map((conn) => {
+            const identity = this.getServerIdentity(conn.host, conn.port, conn.username);
+            const envLabel = identity.environment
+              ? ` [${identity.environment.toUpperCase()}]`
+              : '';
+            const aliasLabel = identity.alias ? ` (别名: ${identity.alias})` : '';
+            return `  - ${conn.username}@${conn.host}:${conn.port}${envLabel}${aliasLabel}`;
+          })
+          .join('\n');
+
+        throw new SSHError(
+          SSHErrorCode.NOT_CONNECTED,
+          `🚨 安全提示：当前有 ${allConnections.length} 个活跃连接，为防止误操作，必须明确指定要关闭哪个服务器的 shell 会话！\n\n当前活跃连接：\n${connectionsList}\n\n请明确指定 host 和 username 参数。`
+        );
+      }
+
+      // 只有一个连接时才允许使用默认连接
       const active = this.getActiveConnection();
       if (!active) return;
       key = active.key;
@@ -792,6 +888,28 @@ export class SSHManager {
     if (host && username) {
       key = getConnectionKey(host, port ?? 22, username);
     } else {
+      // 🚨 安全检查：如果有多个活跃连接，禁止使用默认连接
+      const allConnections = this.listConnections();
+
+      if (allConnections.length > 1) {
+        const connectionsList = allConnections
+          .map((conn) => {
+            const identity = this.getServerIdentity(conn.host, conn.port, conn.username);
+            const envLabel = identity.environment
+              ? ` [${identity.environment.toUpperCase()}]`
+              : '';
+            const aliasLabel = identity.alias ? ` (别名: ${identity.alias})` : '';
+            return `  - ${conn.username}@${conn.host}:${conn.port}${envLabel}${aliasLabel}`;
+          })
+          .join('\n');
+
+        throw new SSHError(
+          SSHErrorCode.NOT_CONNECTED,
+          `🚨 安全提示：当前有 ${allConnections.length} 个活跃连接，为防止误操作，必须明确指定要查询哪个服务器的 shell 会话！\n\n当前活跃连接：\n${connectionsList}\n\n请明确指定 host 和 username 参数。`
+        );
+      }
+
+      // 只有一个连接时才允许使用默认连接
       const active = this.getActiveConnection();
       if (!active) return undefined;
       key = active.key;

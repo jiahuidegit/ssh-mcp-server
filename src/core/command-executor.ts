@@ -18,6 +18,15 @@ import { AuditLogger } from '../logging/audit-logger.js';
 import { withTimeout, getConnectionKey } from '../utils/index.js';
 
 /**
+ * 内部使用的原始执行结果（不包含 duration 和 server）
+ */
+interface RawExecResult {
+  stdout: string;
+  stderr: string;
+  exitCode: number;
+}
+
+/**
  * 命令执行器
  */
 export class CommandExecutor {
@@ -78,7 +87,10 @@ export class CommandExecutor {
         duration,
       });
 
-      return { ...result, duration };
+      // 获取服务器身份信息
+      const serverIdentity = this.sshManager.getServerIdentity(host, port, username);
+
+      return { ...result, duration, server: serverIdentity };
     } catch (error) {
       const duration = Date.now() - startTime;
       const message = error instanceof Error ? error.message : String(error);
@@ -177,6 +189,29 @@ export class CommandExecutor {
     if (host && username) {
       client = this.sshManager.getConnection(host, port ?? 22, username);
     } else {
+      // 🚨 安全检查：如果有多个活跃连接，禁止使用默认连接
+      const allConnections = this.sshManager.listConnections();
+
+      if (allConnections.length > 1) {
+        // 构建错误信息，列出所有连接和环境标签
+        const connectionsList = allConnections
+          .map((conn) => {
+            const identity = this.sshManager.getServerIdentity(conn.host, conn.port, conn.username);
+            const envLabel = identity.environment
+              ? ` [${identity.environment.toUpperCase()}]`
+              : '';
+            const aliasLabel = identity.alias ? ` (别名: ${identity.alias})` : '';
+            return `  - ${conn.username}@${conn.host}:${conn.port}${envLabel}${aliasLabel}`;
+          })
+          .join('\n');
+
+        throw new SSHError(
+          SSHErrorCode.NOT_CONNECTED,
+          `🚨 安全提示：当前有 ${allConnections.length} 个活跃连接，为防止误操作，必须明确指定要操作的服务器！\n\n当前活跃连接：\n${connectionsList}\n\n请在命令中明确指定 host 和 username 参数。`
+        );
+      }
+
+      // 只有一个连接时才允许使用默认连接
       const active = this.sshManager.getActiveConnection();
       client = active?.client;
     }
@@ -264,7 +299,7 @@ export class CommandExecutor {
     client: Client,
     command: string,
     options: ExecOptions
-  ): Promise<ExecResult> {
+  ): Promise<RawExecResult> {
     return new Promise((resolve, reject) => {
       // 构建完整命令（包含工作目录和环境变量）
       let fullCommand = command;
@@ -299,7 +334,6 @@ export class CommandExecutor {
             stdout: stdout.trim(),
             stderr: stderr.trim(),
             exitCode: code ?? 0,
-            duration: 0, // 由调用方填充
           });
         });
 
@@ -348,7 +382,10 @@ export class CommandExecutor {
         duration,
       });
 
-      return { ...result, duration };
+      // 获取服务器身份信息
+      const serverIdentity = this.sshManager.getServerIdentity(host, port, username);
+
+      return { ...result, duration, server: serverIdentity };
     } catch (error) {
       const duration = Date.now() - startTime;
       const message = error instanceof Error ? error.message : String(error);
@@ -371,7 +408,7 @@ export class CommandExecutor {
     client: Client,
     command: string,
     options: ExecOptions & { promptPattern?: string }
-  ): Promise<ExecResult> {
+  ): Promise<RawExecResult> {
     return new Promise((resolve, reject) => {
       // 请求 PTY 并启动 shell
       client.shell({ term: 'xterm' }, (err: Error | undefined, stream: ClientChannel) => {
@@ -387,7 +424,7 @@ export class CommandExecutor {
         // 如 [user@host ~]$ 或 user@host:~$ 或 # 或 $
         const promptPattern: RegExp = options.promptPattern
           ? new RegExp(options.promptPattern)
-          : /[\$#]\s*$/;
+          : /[$#]\s*$/;
 
         // 用于标记命令结束的唯一标识
         const endMarker = `__CMD_END_${Date.now()}__`;
@@ -441,7 +478,6 @@ export class CommandExecutor {
             stdout: stdout.trim(),
             stderr: '', // shell 模式下 stderr 混在 stdout 里
             exitCode,
-            duration: 0,
           });
         });
 

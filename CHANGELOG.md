@@ -13,6 +13,87 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.6.0] - 2026-02-01
+
+### Added
+- 🎯 **服务器身份识别系统** - 彻底解决 AI 无法分辨连接服务器的严重安全问题
+  - 命令执行结果 `ExecResult` 增加 `server` 字段，包含完整服务器身份信息（host、port、username、environment、alias）
+  - 服务器配置增加 `environment` 字段，支持标注环境类型（production/staging/test/development）
+  - 服务器配置增加 `description` 字段，用于备注说明
+  - 新增 `list_active_connections` 工具 - 列出所有活跃连接及其环境标签，方便 AI 随时查看当前连接状态
+
+### Changed
+- 🔒 **生产环境增强保护** - 危险命令检测增加环境识别
+  - 生产环境执行危险命令时显示醒目的 🚨 警告标识
+  - 命令执行结果自动标注执行环境（`[执行环境: 🔴 PRODUCTION]`）
+  - 批量执行命令时检测是否包含生产环境服务器
+  - 所有命令工具（exec、exec_sudo、exec_batch、exec_shell）均增加环境提示
+- 📝 **优化工具描述防止 AI 误操作** - MCP 工具描述全面优化，引导 AI 正确识别服务器
+  - `exec`/`exec_sudo`/`exec_shell` 工具描述强调：执行前先调用 `list_active_connections` 确认服务器
+  - `host` 参数描述明确说明：有多个活跃连接时必须明确指定服务器
+  - `exec_batch` 工具特别警告：批量操作风险极高，包含生产环境时会有特别提示
+  - 所有工具 schema 统一改为 `confirmationToken` 机制，废弃 `confirmed`/`overwrite` 参数
+  - 命令执行工具描述中明确说明返回值包含服务器身份信息（server.host、server.environment、server.alias）
+
+### Security
+- ✅ **防止误操作生产服务器** - AI 现在可以清楚知道自己连接的是哪个服务器
+  - 每个命令返回值都包含服务器身份信息
+  - 生产环境危险命令需要二次确认并显示特殊警告
+  - AI 可通过 `list_active_connections` 主动检查当前连接状态
+  - 🚨 **多连接强制指定服务器（彻底防止混淆）** - 当有多个活跃 SSH 连接时，所有操作都必须明确指定 host 和 username
+    - 影响范围：`exec`、`exec_sudo`、`exec_batch`、`exec_shell`、`shell_send`、`shell_read`、`shell_close`、SFTP 操作
+    - 错误信息会列出所有活跃连接及其环境标签（production/staging/test），帮助 AI 识别正确的服务器
+    - 只有当仅有一个活跃连接时，才允许省略服务器参数使用默认连接
+    - 彻底杜绝 AI 以为在测试服务器实则在生产服务器执行命令的严重安全隐患
+- 🛡️ **服务器配置删除保护** - 防止误删生产服务器配置
+  - `remove_server` 增加 `confirmationToken` 参数，删除生产环境服务器必须明确确认
+  - 删除前显示完整的服务器信息和环境标签
+  - 删除任何服务器配置都需要确认（非生产环境也会警告）
+- 🛡️ **服务器配置覆盖保护** - 防止意外覆盖现有配置
+  - `save_server` 增加 `confirmationToken` 参数，覆盖现有配置需要明确确认
+  - 覆盖前对比显示现有配置和新配置的差异
+  - 覆盖生产环境配置需要更严格的确认
+- 📝 **凭证操作审计日志** - 所有敏感凭证操作均记录审计日志
+  - 记录凭证保存操作（新增/更新）
+  - 记录凭证删除操作（高风险，使用 warn 级别）
+  - 记录凭证读取失败
+  - 审计日志包含操作类型、存储方式、凭证类型（不记录实际内容）
+- 🔐 **确认 Token 机制** - 彻底防止 AI 绕过安全检查
+  - 替换所有 `confirmed` 参数为 `confirmationToken` 机制
+  - Token 由服务端生成，AI 无法伪造
+  - Token 有 5 分钟有效期，过期自动失效
+  - Token 一次性使用，验证后立即销毁
+  - Token 绑定操作类型和参数哈希，防止参数篡改
+  - 影响工具：`exec`、`exec_sudo`、`exec_batch`、`exec_shell`、`shell_send`、`save_server`、`remove_server`
+- 🛡️ **shell_send 危险命令检测** - 修复可绕过 exec 保护的严重漏洞
+  - `shell_send` 现在也会检测危险命令
+  - 与 `exec` 使用相同的 token 确认机制
+  - 防止 AI 通过交互式 shell 绕过安全检查
+- 🔍 **全面的危险命令检测模式** - 从 15 个基础模式扩展到 60+ 个全面覆盖的模式
+  - **容器操作**（10个模式）：Docker 批量删除、镜像清理、系统清理；Kubernetes 删除命名空间/部署/服务
+  - **数据库操作**（8个模式）：MySQL DROP DATABASE/TABLE、PostgreSQL TRUNCATE/DROP、MongoDB dropDatabase、Redis FLUSHALL/FLUSHDB
+  - **服务管理**（6个模式）：systemctl stop/disable/mask、pm2 delete all、supervisorctl stop all
+  - **包管理器**（4个模式）：npm uninstall -g、pip uninstall、apt/yum remove/purge
+  - **Git 操作**（4个模式）：push --force、reset --hard、clean -f、branch -D
+  - **网络操作**（4个模式）：iptables 清空规则、防火墙禁用、网络接口关闭
+  - **系统操作**（15个模式）：删除根目录、格式化磁盘、chmod 777、Fork 炸弹、关机重启等
+  - 涵盖生产环境中最常见的破坏性操作场景，防止 AI 误操作容器、数据库、服务
+
+### Technical Details
+- 新增文件：
+  - `src/utils/confirmation-manager.ts` - 确认 Token 管理器
+- 修改文件：
+  - `src/types/index.ts` - 新增 `ServerIdentity` 接口，扩展 `ExecResult`、`ServerConfig`、`ConnectOptions`
+  - `src/core/ssh-manager.ts` - 新增 `getServerIdentity()` 方法缓存并返回服务器身份
+  - `src/core/command-executor.ts` - 所有命令执行方法返回值附加 `server` 字段
+  - `src/tools/connection.ts` - 连接时传递 alias 和 environment，新增 `listActiveConnections()` 方法
+  - `src/tools/server.ts` - 保存服务器时支持 environment 和 description 字段，使用 token 确认机制
+  - `src/tools/exec.ts` - 所有命令工具使用 token 确认机制，shell_send 增加危险命令检测
+  - `src/storage/credential-store.ts` - 增加 AuditLogger 集成，记录所有凭证操作
+  - `src/index.ts` - 初始化 ConfirmationManager，传递给所有需要确认的工具
+
+---
+
 ## [0.5.0] - 2026-01-21
 
 ### Added

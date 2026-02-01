@@ -8,6 +8,7 @@ import * as path from 'path';
 import * as crypto from 'crypto';
 import { SSHError, SSHErrorCode, MCPServerConfig, DEFAULT_CONFIG } from '../types/index.js';
 import { expandHome } from '../utils/index.js';
+import { AuditLogger } from '../logging/audit-logger.js';
 
 // keytar 类型
 type KeytarModule = typeof import('keytar');
@@ -47,11 +48,13 @@ export interface Credential {
  */
 export class CredentialStore {
   private config: MCPServerConfig;
+  private logger: AuditLogger;
   private encryptionKey?: Buffer;
   private credentialsFilePath: string;
 
-  constructor(config: Partial<MCPServerConfig> = {}) {
+  constructor(config: Partial<MCPServerConfig> = {}, logger: AuditLogger) {
     this.config = { ...DEFAULT_CONFIG, ...config };
+    this.logger = logger;
     this.credentialsFilePath = path.join(
       expandHome(this.config.dataDir),
       'credentials.enc'
@@ -78,20 +81,49 @@ export class CredentialStore {
    * 保存凭证
    */
   async save(alias: string, credential: Credential): Promise<void> {
+    // 检查是否是更新
+    const existing = await this.get(alias);
+    const isUpdate = !!existing;
+
     // 优先使用 keytar
     const keytar = await getKeytar();
     if (keytar) {
       try {
         const value = JSON.stringify(credential);
         await keytar.setPassword(SERVICE_NAME, alias, value);
+
+        // 记录审计日志
+        this.logger.log('info', 'credential_save', {
+          alias,
+          isUpdate,
+          storage: 'keytar',
+          hasPassword: !!credential.password,
+          hasPrivateKey: !!credential.privateKey,
+          hasPassphrase: !!credential.passphrase,
+        });
+
         return;
-      } catch {
+      } catch (error) {
         // keytar 失败，回退到文件存储
+        this.logger.log('warn', 'credential_keytar_failed', {
+          alias,
+          error: error instanceof Error ? error.message : String(error),
+        });
       }
     }
 
     // 使用加密文件存储
     await this.saveToFile(alias, credential);
+
+    // 记录审计日志
+    this.logger.log('info', 'credential_save', {
+      alias,
+      isUpdate,
+      storage: 'file',
+      hasPassword: !!credential.password,
+      hasPrivateKey: !!credential.privateKey,
+      hasPassphrase: !!credential.passphrase,
+    });
   }
 
   /**
@@ -106,8 +138,12 @@ export class CredentialStore {
         if (value) {
           return JSON.parse(value) as Credential;
         }
-      } catch {
+      } catch (error) {
         // keytar 失败，回退到文件存储
+        this.logger.log('debug', 'credential_keytar_read_failed', {
+          alias,
+          error: error instanceof Error ? error.message : String(error),
+        });
       }
     }
 
@@ -119,18 +155,39 @@ export class CredentialStore {
    * 删除凭证
    */
   async delete(alias: string): Promise<void> {
+    // 检查凭证是否存在
+    const existing = await this.get(alias);
+    if (!existing) {
+      this.logger.log('warn', 'credential_delete_not_found', { alias });
+      return;
+    }
+
+    // 记录删除操作（在删除前记录，确保有审计痕迹）
+    this.logger.log('warn', 'credential_delete', {
+      alias,
+      hadPassword: !!existing.password,
+      hadPrivateKey: !!existing.privateKey,
+      hadPassphrase: !!existing.passphrase,
+    });
+
     // 优先使用 keytar
     const keytar = await getKeytar();
     if (keytar) {
       try {
         await keytar.deletePassword(SERVICE_NAME, alias);
-      } catch {
-        // 忽略错误
+      } catch (error) {
+        // 记录失败但继续
+        this.logger.log('error', 'credential_keytar_delete_failed', {
+          alias,
+          error: error instanceof Error ? error.message : String(error),
+        });
       }
     }
 
     // 同时从文件存储删除
     await this.deleteFromFile(alias);
+
+    this.logger.log('info', 'credential_delete_success', { alias });
   }
 
   /**

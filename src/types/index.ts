@@ -16,6 +16,8 @@ export const ServerConfigSchema = z.object({
   port: z.number().int().min(1).max(65535).default(22),
   username: z.string().min(1, '用户名不能为空'),
   authType: z.enum(['password', 'privateKey']),
+  environment: z.enum(['production', 'staging', 'test', 'development']).optional(),
+  description: z.string().optional(),
   group: z.string().optional(),
   // 敏感信息不在这里存储，由 CredentialStore 管理
 });
@@ -40,6 +42,9 @@ export interface ConnectOptions {
   privateKey?: string;
   passphrase?: string;
   timeout?: number;
+  // 扩展字段：用于服务器身份识别
+  alias?: string;
+  environment?: 'production' | 'staging' | 'test' | 'development';
 }
 
 /** 连接状态 */
@@ -62,12 +67,22 @@ export interface ExecOptions {
   env?: Record<string, string>;
 }
 
+/** 服务器身份信息 */
+export interface ServerIdentity {
+  host: string;
+  port: number;
+  username: string;
+  environment?: 'production' | 'staging' | 'test' | 'development';
+  alias?: string; // 服务器别名（如果有）
+}
+
 /** 命令执行结果 */
 export interface ExecResult {
   stdout: string;
   stderr: string;
   exitCode: number;
   duration: number; // 毫秒
+  server: ServerIdentity; // 服务器身份信息
 }
 
 /** 批量执行结果 */
