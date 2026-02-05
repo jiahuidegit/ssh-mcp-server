@@ -6,51 +6,73 @@
 [![npm version](https://img.shields.io/npm/v/@erliban/ssh-mcp-server.svg)](https://www.npmjs.com/package/@erliban/ssh-mcp-server)
 [![npm downloads](https://img.shields.io/npm/dm/@erliban/ssh-mcp-server.svg)](https://www.npmjs.com/package/@erliban/ssh-mcp-server)
 
-**🔐 A secure remote server management tool based on MCP protocol, supporting SSH connections, command execution, and SFTP file transfers.**
+**A secure remote server management tool based on MCP protocol, supporting SSH connections, command execution, and SFTP file transfers.**
 
-> ⭐ **If you find this project helpful, please give it a star on [GitHub](https://github.com/jiahuidegit/ssh-mcp-server)!** Your support helps us improve!
+**The only MCP SSH tool that truly prevents AI from accidentally running commands on the wrong server.**
+
+> If you find this project helpful, please give it a star on [GitHub](https://github.com/jiahuidegit/ssh-mcp-server)! Your support helps us improve!
 
 [English](README.md) | [中文](README_CN.md)
 
 ---
 
-## 🚀 Features
+## Why SSH MCP Server?
 
-- 🔗 **SSH Connection Management** - Password/key authentication with connection pooling
-- ⚡ **Command Execution** - Regular commands, sudo commands, batch execution
-- 📁 **SFTP Operations** - Upload, download, list directories, create/delete files
-- 💾 **Server Management** - Save/list/remove server configurations
-- 🔒 **Credential Security** - System Keychain encrypted storage (macOS/Windows/Linux)
-- 📝 **Audit Logging** - Records all operations with sensitive data masking
+Managing remote servers with AI assistants is powerful -- but also dangerous. When multiple servers are connected, AI models frequently mix up which server they're operating on. One wrong `rm -rf` on a production server, and you're in trouble.
+
+**SSH MCP Server is built from the ground up to solve this problem.** Every safety mechanism is enforced server-side with cryptographic tokens -- the AI cannot bypass them, no matter what.
+
+### Safety guarantees other tools don't have:
+
+- **Target Lock** -- Tracks which server the AI is currently operating on. If it tries to switch targets, it must confirm first. No silent mistakes.
+- **Alias-based routing** -- Save servers with aliases like `us-prod` or `jp-staging`, then use `exec(alias: "us-prod")` instead of raw IPs. Harder to mix up.
+- **Dangerous command detection** -- 60+ patterns covering Docker, Kubernetes, databases, system commands. All require cryptographic token confirmation.
+- **Multi-connection enforcement** -- When multiple servers are connected, every operation MUST specify the target. No ambiguous defaults.
+- **Environment labels** -- Mark servers as `production` / `staging` / `test`. Every command output shows which environment it ran on.
 
 ---
 
-## 🆕 What's New
+## Features
 
-### v0.4.0 (Latest)
+- **SSH Connection Management** - Password/key authentication with connection pooling
+- **Command Execution** - Regular commands, sudo commands, batch execution, shell mode (bastion hosts)
+- **SFTP Operations** - Upload, download, list directories, create/delete files
+- **Server Management** - Save/list/remove server configurations with alias support
+- **Credential Security** - System Keychain encrypted storage (macOS/Windows/Linux)
+- **Audit Logging** - Records all operations with sensitive data masking
+- **Persistent Shell Sessions** - Multi-round interaction for bastion host scenarios
+- **Target Lock Protection** - Prevents AI from accidentally running commands on the wrong server
 
-- 🔗 **Shell Mode Execution** - New `exec_shell` tool for bastion hosts that don't support exec mode
-  - Uses interactive PTY shell to execute commands
-  - Perfect for jump server / bastion host scenarios
-  - Supports custom prompt pattern for different shell environments
+---
 
-### v0.3.1
+## What's New
 
-- 💡 **Enhanced Error Messages** - All SSH errors now include bilingual (Chinese/English) solutions
-- 📖 **npm Documentation** - Added GitHub repository links for easier contribution
+### v0.7.0 (Latest)
 
-### v0.3.0
+- **Target Lock: Server Switch Protection** - The core safety feature for multi-server scenarios
+  - Tracks the AI's current operation target; switching servers requires explicit confirmation with a cryptographic token
+  - Single server: zero overhead. Multi-server, same target: zero overhead. Only triggers on actual target switch.
+  - Works across all tools: exec, exec_sudo, exec_shell, shell_send, and all SFTP operations
+  - If both target switch and dangerous command confirmations are needed, they run in sequence (switch first)
+- **Alias Support for All Tools** - Use server aliases instead of raw host/port/username
+  - `exec(alias: "us-prod", command: "ls")` -- routes to the saved server configuration
+  - Available on all exec and SFTP tools via the new `alias` parameter
+- **Server Environment Labels in All Outputs** - Every command result now shows `[Server: us-prod (root@1.2.3.4) | Env: PRODUCTION]`
+  - No longer limited to production only -- all environments are labeled
+- **SFTP Multi-Connection Safety** - SFTP operations now enforce the same multi-connection safety checks as command execution
+  - SFTP results include `server` field with full identity information
+- **Connect shows active connections** - When connecting a second server, the response lists all active connections as a reminder
 
-- 🔄 **Improved Reconnection Mechanism** - Fixed "configuration not found" error after disconnection
-- 💾 **Configuration & State Separation** - Connection configs persist after disconnection, enabling seamless reconnection
-- 📦 **New Configuration APIs** - `getCachedConfig()`, `listCachedConfigs()`, `clearConfigCache()`, etc.
-- ⚡ **No Password Re-entry** - Reconnect anytime without re-entering credentials
+### v0.6.0
 
-### v0.2.2
+- **Server Identity System** - Commands return full server identity (host, port, username, environment, alias)
+- **Confirmation Token Mechanism** - Cryptographic tokens replace boolean flags; AI cannot forge confirmations
+- **60+ Dangerous Command Patterns** - Docker, Kubernetes, databases, system services, Git, network, package managers
+- **Multi-Connection Enforcement** - Must specify target when multiple connections are active
 
-- ⏱️ **Long Timeout Support** - Added `longCommandTimeout` (30 min) for docker build, etc.
-- 💓 **Connection Health Check** - Heartbeat detection every 30 seconds
-- 🔄 **Auto Reconnection** - Exponential backoff retry strategy (max 3 attempts)
+### v0.5.0
+
+- **Persistent Shell Sessions** - `shell_send`, `shell_read`, `shell_close` for multi-round bastion host interaction
 
 [View Full Changelog](CHANGELOG.md) | [All Releases](https://github.com/jiahuidegit/ssh-mcp-server/releases)
 
@@ -174,16 +196,19 @@ Edit the configuration file:
 
 | Tool | Description |
 |------|-------------|
-| `exec` | Execute remote command |
+| `exec` | Execute remote command (supports alias routing) |
 | `exec_sudo` | Execute with sudo privileges |
 | `exec_batch` | Batch execute on multiple servers |
 | `exec_shell` | Execute via interactive shell (for bastion hosts) |
+| `shell_send` | Send input to persistent shell session |
+| `shell_read` | Read shell session output buffer |
+| `shell_close` | Close persistent shell session |
 
 ### SFTP Operations
 
 | Tool | Description |
 |------|-------------|
-| `sftp_ls` | List directory contents |
+| `sftp_ls` | List directory contents (supports alias routing) |
 | `sftp_upload` | Upload file |
 | `sftp_download` | Download file |
 | `sftp_mkdir` | Create directory |
@@ -195,6 +220,7 @@ Edit the configuration file:
 |------|-------------|
 | `health_check` | Check connection status |
 | `get_logs` | Get audit logs |
+| `list_active_connections` | List all active connections with environment labels |
 
 ---
 
@@ -236,12 +262,14 @@ Server 10.0.0.3: 78% used ⚠️
 
 ---
 
-## 🔒 Security Notes
+## Security Notes
 
-1. **Credential Storage** - Prefers system Keychain (macOS Keychain, Windows Credential Manager). Falls back to AES-256-GCM encrypted file storage when no desktop environment is available.
-2. **Log Masking** - Passwords, private keys, and other sensitive information are automatically masked.
-3. **Dangerous Commands** - Operations like deleting system root directory are prohibited.
-4. **Connection Pool** - Automatically cleans up idle connections to prevent resource leaks.
+1. **Target Lock** - Tracks the AI's operation target; switching servers requires cryptographic token confirmation. Prevents the #1 cause of AI server misoperations.
+2. **Credential Storage** - Prefers system Keychain (macOS Keychain, Windows Credential Manager). Falls back to AES-256-GCM encrypted file storage when no desktop environment is available.
+3. **Log Masking** - Passwords, private keys, and other sensitive information are automatically masked.
+4. **Dangerous Commands** - 60+ patterns detected. All require token confirmation. Production environments get extra warnings.
+5. **Connection Pool** - Automatically cleans up idle connections to prevent resource leaks.
+6. **Multi-Connection Safety** - When multiple servers are connected, every operation must explicitly specify the target server.
 
 ---
 

@@ -8,6 +8,7 @@ import { SSHManager } from '../core/ssh-manager.js';
 import { ServerStore } from '../storage/server-store.js';
 import { CredentialStore } from '../storage/credential-store.js';
 import { ConnectOptions, SSHError, SSHErrorCode } from '../types/index.js';
+import { TargetGuard } from '../utils/target-guard.js';
 
 // connect 参数 Schema
 export const ConnectSchema = z.object({
@@ -41,13 +42,14 @@ export class ConnectionTools {
   constructor(
     private sshManager: SSHManager,
     private serverStore: ServerStore,
-    private credentialStore: CredentialStore
+    private credentialStore: CredentialStore,
+    private targetGuard?: TargetGuard
   ) {}
 
   /**
    * 建立 SSH 连接
    */
-  async connect(params: ConnectParams): Promise<{ success: boolean; message: string; status?: unknown }> {
+  async connect(params: ConnectParams): Promise<{ success: boolean; message: string; status?: unknown; activeConnections?: unknown[] }> {
     let connectOptions: ConnectOptions;
 
     // 如果提供了别名，从存储中获取配置
@@ -91,11 +93,35 @@ export class ConnectionTools {
 
     const status = await this.sshManager.connect(connectOptions);
 
-    return {
+    // 连接成功后，检查是否有其他活跃连接，提示信息
+    const allConnections = this.sshManager.listConnections();
+    let activeConnections: unknown[] | undefined;
+
+    if (allConnections.length > 1) {
+      activeConnections = allConnections.map((conn) => {
+        const identity = this.sshManager.getServerIdentity(conn.host, conn.port, conn.username);
+        return {
+          host: conn.host,
+          port: conn.port,
+          username: conn.username,
+          environment: identity.environment,
+          alias: identity.alias,
+        };
+      });
+    }
+
+    const result: { success: boolean; message: string; status?: unknown; activeConnections?: unknown[] } = {
       success: true,
       message: `已连接到 ${status.username}@${status.host}:${status.port}`,
       status,
     };
+
+    if (activeConnections) {
+      result.activeConnections = activeConnections;
+      result.message += `\n注意：当前共有 ${allConnections.length} 个活跃连接，执行命令时请通过 host/alias 明确指定目标服务器。`;
+    }
+
+    return result;
   }
 
   /**
@@ -104,11 +130,19 @@ export class ConnectionTools {
   async disconnect(params: DisconnectParams): Promise<{ success: boolean; message: string }> {
     if (params.all) {
       await this.sshManager.disconnect();
+      // 断开所有连接时重置目标锁定
+      if (this.targetGuard) {
+        this.targetGuard.resetTarget();
+      }
       return { success: true, message: '已断开所有连接' };
     }
 
     if (params.host && params.username) {
       await this.sshManager.disconnect(params.host, params.port, params.username);
+      // 重置目标锁定（断开连接后目标状态可能无效）
+      if (this.targetGuard) {
+        this.targetGuard.resetTarget();
+      }
       return { success: true, message: `已断开 ${params.username}@${params.host}` };
     }
 
@@ -117,6 +151,10 @@ export class ConnectionTools {
     if (active) {
       const [userHost] = active.key.split(':');
       await this.sshManager.disconnect();
+      // 重置目标锁定
+      if (this.targetGuard) {
+        this.targetGuard.resetTarget();
+      }
       return { success: true, message: `已断开 ${userHost}` };
     }
 

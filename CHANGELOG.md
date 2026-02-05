@@ -13,6 +13,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.7.0] - 2026-02-05
+
+### Added
+- **Target Lock（目标锁定）** - 多服务器场景下的核心安全特性，彻底防止 AI 误操作
+  - 新增 `src/utils/target-guard.ts` 模块，约 180 行核心逻辑
+  - 追踪 AI 当前操作目标服务器，切换时通过 ConfirmationManager 生成加密 token 强制确认
+  - 触发规则：单服务器不触发；多服务器连续操作同一台不触发；首次操作不触发；仅在实际切换目标时触发
+  - 如果同时触发切换确认和危险命令确认，分两轮执行（切换优先）
+- **所有 exec/SFTP 工具支持 `alias` 参数** - 用服务器别名代替原始 host/port/username
+  - `exec(alias: "us-prod", command: "ls")` 自动路由到已保存的服务器配置
+  - 所有 Schema 增加 `alias` 和 `targetConfirmationToken` 字段
+- **SFTP 返回值增加 `server` 字段** - 所有 SFTP 操作结果包含完整服务器身份信息
+- **连接成功后提示活跃连接列表** - 当连接第二台服务器时，返回信息列出所有活跃连接
+
+### Changed
+- **环境标注扩展到所有连接** - 不再仅限生产环境，所有连接都显示 `[服务器: name (user@host) | 环境: ENV]`
+- **SFTP 多连接安全检查** - `sftp-operator.ts` 的 `getSftp()` 增加与 `command-executor` 相同的多连接强制指定逻辑
+- **disconnect 后重置目标锁定** - 断开连接时自动清空 lastTarget 状态
+
+### Security
+- **ConfirmationManager 排除 targetConfirmationToken** - `hashParams()` 排除 `targetConfirmationToken` 字段，防止 token 参与哈希导致验证失败
+- **ServerIdentity 增加 label 字段** - 支持人类可读的服务器标签
+
+### Technical Details
+- 新增文件：
+  - `src/utils/target-guard.ts` - 目标锁定守卫，包含 resolveServer/validateTarget/recordTarget/resetTarget
+- 修改文件：
+  - `src/types/index.ts` - ServerIdentity 增加 label 字段
+  - `src/utils/confirmation-manager.ts` - hashParams 排除 targetConfirmationToken
+  - `src/tools/exec.ts` - 所有 Schema 增加 alias/targetConfirmationToken；ExecTools 注入 TargetGuard；新增 formatServerLabel
+  - `src/tools/sftp.ts` - 所有 Schema 增加 alias/targetConfirmationToken；SftpTools 注入 TargetGuard + SSHManager；返回值增加 server
+  - `src/core/sftp-operator.ts` - getSftp 增加多连接安全检查
+  - `src/tools/connection.ts` - 注入 TargetGuard；disconnect 调用 resetTarget；connect 返回活跃连接列表
+  - `src/index.ts` - 初始化 TargetGuard；注入到 ExecTools/SftpTools/ConnectionTools；更新所有工具定义
+
+---
+
 ## [0.6.0] - 2026-02-01
 
 ### Added

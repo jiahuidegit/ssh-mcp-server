@@ -74,6 +74,7 @@ export interface ServerIdentity {
   username: string;
   environment?: 'production' | 'staging' | 'test' | 'development';
   alias?: string; // 服务器别名（如果有）
+  label?: string; // 人类可读的服务器标签，如 "[us-prod] root@1.2.3.4 PRODUCTION"
 }
 
 /** 命令执行结果 */

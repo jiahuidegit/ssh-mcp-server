@@ -107,9 +107,9 @@ export class ConfirmationManager {
    * 计算参数哈希值
    */
   private hashParams(params: Record<string, unknown>): string {
-    // 移除 confirmationToken 字段本身
+    // 移除 confirmationToken 和 targetConfirmationToken 字段本身
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const { confirmationToken, ...rest } = params;
+    const { confirmationToken, targetConfirmationToken, ...rest } = params;
     // 按字母顺序排序 key，确保哈希一致性
     const sorted = Object.keys(rest)
       .sort()

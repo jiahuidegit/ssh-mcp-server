@@ -15,6 +15,7 @@ import {
 import { MCPServerConfig, DEFAULT_CONFIG } from './types/index.js';
 import { getEnvConfig } from './utils/index.js';
 import { ConfirmationManager } from './utils/confirmation-manager.js';
+import { TargetGuard } from './utils/target-guard.js';
 
 // 核心模块
 import { SSHManager } from './core/ssh-manager.js';
@@ -53,6 +54,7 @@ class SSHMCPServer {
   private serverStore: ServerStore;
   private credentialStore: CredentialStore;
   private confirmationManager: ConfirmationManager;
+  private targetGuard: TargetGuard;
 
   // 工具处理器
   private connectionTools: ConnectionTools;
@@ -80,11 +82,14 @@ class SSHMCPServer {
     this.commandExecutor = new CommandExecutor(this.sshManager, this.config, this.logger);
     this.sftpOperator = new SFTPOperator(this.sshManager, this.config, this.logger);
 
+    // 初始化目标锁定守卫
+    this.targetGuard = new TargetGuard(this.sshManager, this.confirmationManager, this.serverStore);
+
     // 初始化工具处理器
-    this.connectionTools = new ConnectionTools(this.sshManager, this.serverStore, this.credentialStore);
+    this.connectionTools = new ConnectionTools(this.sshManager, this.serverStore, this.credentialStore, this.targetGuard);
     this.serverTools = new ServerTools(this.serverStore, this.credentialStore, this.confirmationManager);
-    this.execTools = new ExecTools(this.commandExecutor, this.sshManager, this.confirmationManager);
-    this.sftpTools = new SftpTools(this.sftpOperator);
+    this.execTools = new ExecTools(this.commandExecutor, this.sshManager, this.confirmationManager, this.targetGuard);
+    this.sftpTools = new SftpTools(this.sftpOperator, this.sshManager, this.targetGuard);
     this.systemTools = new SystemTools(this.sshManager, this.logger);
 
     // 初始化 MCP Server
@@ -239,43 +244,47 @@ class SSHMCPServer {
       // 命令执行
       {
         name: 'exec',
-        description: '在远程服务器执行命令。⚠️ 重要：执行命令前请先调用 list_active_connections 确认要操作的服务器和环境（production/staging/test）。危险命令（如删除、容器、数据库操作）需要先获取 confirmationToken。命令执行结果会包含服务器身份信息（server.host、server.environment、server.alias）。',
+        description: '在远程服务器执行命令。推荐使用 alias 指定目标服务器（需先通过 save_server 保存）。多服务器场景下切换目标服务器时会要求确认，防止误操作。危险命令需要先获取 confirmationToken。',
         inputSchema: {
           type: 'object',
           properties: {
             command: { type: 'string', description: '要执行的命令' },
-            host: { type: 'string', description: '服务器地址。⚠️ 如果有多个活跃连接，必须明确指定服务器，建议先调用 list_active_connections 查看' },
+            alias: { type: 'string', description: '服务器别名（推荐，需先通过 save_server 保存）' },
+            host: { type: 'string', description: '服务器地址（如果有多个活跃连接必须指定，或使用 alias）' },
             port: { type: 'number', description: 'SSH 端口' },
             username: { type: 'string', description: '用户名' },
             timeout: { type: 'number', description: '命令超时时间（毫秒）' },
             useLongTimeout: { type: 'boolean', description: '使用长超时（30分钟），适用于 docker build 等耗时操作' },
             cwd: { type: 'string', description: '工作目录' },
-            confirmationToken: { type: 'string', description: '危险命令确认 token（首次调用危险命令会返回 token 和警告，使用 token 再次调用以确认执行）' },
+            confirmationToken: { type: 'string', description: '危险命令确认 token' },
+            targetConfirmationToken: { type: 'string', description: '服务器切换确认 token（切换目标服务器时返回，确认后重新调用）' },
           },
           required: ['command'],
         },
       },
       {
         name: 'exec_sudo',
-        description: '以 sudo 权限执行命令。⚠️ 重要：执行前请先调用 list_active_connections 确认要操作的服务器和环境。危险命令需要先获取 confirmationToken。',
+        description: '以 sudo 权限执行命令。推荐使用 alias 指定目标服务器。多服务器场景下切换目标时需确认。危险命令需要 confirmationToken。',
         inputSchema: {
           type: 'object',
           properties: {
             command: { type: 'string', description: '要执行的命令' },
             sudoPassword: { type: 'string', description: 'sudo 密码' },
-            host: { type: 'string', description: '服务器地址。⚠️ 如果有多个活跃连接，必须明确指定' },
+            alias: { type: 'string', description: '服务器别名（推荐）' },
+            host: { type: 'string', description: '服务器地址（如果有多个活跃连接必须指定，或使用 alias）' },
             port: { type: 'number', description: 'SSH 端口' },
             username: { type: 'string', description: '用户名' },
             timeout: { type: 'number', description: '命令超时时间（毫秒）' },
             useLongTimeout: { type: 'boolean', description: '使用长超时（30分钟）' },
-            confirmationToken: { type: 'string', description: '危险命令确认 token（首次调用危险命令会返回 token，使用 token 再次调用以确认）' },
+            confirmationToken: { type: 'string', description: '危险命令确认 token' },
+            targetConfirmationToken: { type: 'string', description: '服务器切换确认 token' },
           },
           required: ['command', 'sudoPassword'],
         },
       },
       {
         name: 'exec_batch',
-        description: '在多台服务器批量执行命令。🚨 批量操作风险极高！执行前必须：1. 仔细检查服务器列表和环境标签；2. 确认命令正确性；3. 包含生产环境服务器时会有特别警告。危险命令需要先获取 confirmationToken。',
+        description: '在多台服务器批量执行命令。批量操作风险极高！包含生产环境服务器时会有特别警告。危险命令需要 confirmationToken。',
         inputSchema: {
           type: 'object',
           properties: {
@@ -291,55 +300,60 @@ class SSHMCPServer {
                 },
                 required: ['host', 'username'],
               },
-              description: '服务器列表（每个服务器执行结果会包含环境信息）',
+              description: '服务器列表',
             },
             timeout: { type: 'number', description: '命令超时时间（毫秒）' },
-            confirmationToken: { type: 'string', description: '危险命令确认 token（首次调用危险命令会返回 token 和警告，使用 token 再次调用以确认）' },
+            confirmationToken: { type: 'string', description: '危险命令确认 token' },
           },
           required: ['command', 'servers'],
         },
       },
       {
         name: 'exec_shell',
-        description: '通过交互式 shell 模式执行命令。用于不支持 exec 模式的堡垒机穿透场景。⚠️ 执行前请先调用 list_active_connections 确认服务器。危险命令需要先获取 confirmationToken。',
+        description: '通过交互式 shell 模式执行命令（用于堡垒机穿透）。推荐使用 alias 指定目标服务器。多服务器场景下切换目标时需确认。',
         inputSchema: {
           type: 'object',
           properties: {
             command: { type: 'string', description: '要执行的命令' },
-            host: { type: 'string', description: '服务器地址。⚠️ 如果有多个活跃连接，必须明确指定' },
+            alias: { type: 'string', description: '服务器别名（推荐）' },
+            host: { type: 'string', description: '服务器地址（如果有多个活跃连接必须指定，或使用 alias）' },
             port: { type: 'number', description: 'SSH 端口' },
             username: { type: 'string', description: '用户名' },
             timeout: { type: 'number', description: '命令超时时间（毫秒）' },
             promptPattern: { type: 'string', description: '自定义 shell 提示符正则表达式（可选）' },
-            confirmationToken: { type: 'string', description: '危险命令确认 token（首次调用危险命令会返回 token，使用 token 再次调用以确认）' },
+            confirmationToken: { type: 'string', description: '危险命令确认 token' },
+            targetConfirmationToken: { type: 'string', description: '服务器切换确认 token' },
           },
           required: ['command'],
         },
       },
       {
         name: 'shell_send',
-        description: '发送输入到持久化 shell 会话。用于多轮交互场景，如堡垒机穿透需要输入用户名和密码。⚠️ 也会检测危险命令，防止绕过 exec 的安全检查。',
+        description: '发送输入到持久化 shell 会话（用于多轮交互，如堡垒机穿透）。推荐使用 alias 指定目标服务器。也会检测危险命令和服务器切换。',
         inputSchema: {
           type: 'object',
           properties: {
             input: { type: 'string', description: '要发送的输入内容' },
-            host: { type: 'string', description: '服务器地址。⚠️ 如果有多个活跃连接，必须明确指定' },
+            alias: { type: 'string', description: '服务器别名（推荐）' },
+            host: { type: 'string', description: '服务器地址（如果有多个活跃连接必须指定，或使用 alias）' },
             port: { type: 'number', description: 'SSH 端口' },
             username: { type: 'string', description: '用户名' },
             timeout: { type: 'number', description: '等待响应超时时间（毫秒），默认 10000' },
             waitForPrompt: { type: 'boolean', description: '是否等待提示符出现，默认 true' },
             clearBuffer: { type: 'boolean', description: '是否先清空缓冲区，默认 false' },
-            confirmationToken: { type: 'string', description: '危险命令确认 token（如果输入内容是危险命令，首次调用会返回 token）' },
+            confirmationToken: { type: 'string', description: '危险命令确认 token' },
+            targetConfirmationToken: { type: 'string', description: '服务器切换确认 token' },
           },
           required: ['input'],
         },
       },
       {
         name: 'shell_read',
-        description: '读取持久化 shell 会话的输出缓冲区',
+        description: '读取持久化 shell 会话的输出缓冲区。推荐使用 alias 指定目标服务器。',
         inputSchema: {
           type: 'object',
           properties: {
+            alias: { type: 'string', description: '服务器别名（推荐）' },
             host: { type: 'string', description: '服务器地址（可选，默认使用当前连接）' },
             port: { type: 'number', description: 'SSH 端口' },
             username: { type: 'string', description: '用户名' },
@@ -349,10 +363,11 @@ class SSHMCPServer {
       },
       {
         name: 'shell_close',
-        description: '关闭持久化 shell 会话',
+        description: '关闭持久化 shell 会话。推荐使用 alias 指定目标服务器。',
         inputSchema: {
           type: 'object',
           properties: {
+            alias: { type: 'string', description: '服务器别名（推荐）' },
             host: { type: 'string', description: '服务器地址（可选，默认使用当前连接）' },
             port: { type: 'number', description: 'SSH 端口' },
             username: { type: 'string', description: '用户名' },
@@ -363,76 +378,86 @@ class SSHMCPServer {
       // SFTP 操作
       {
         name: 'sftp_ls',
-        description: '列出远程目录内容',
+        description: '列出远程目录内容。推荐使用 alias 指定目标服务器。多服务器场景下切换目标时需确认。',
         inputSchema: {
           type: 'object',
           properties: {
             path: { type: 'string', description: '远程目录路径' },
+            alias: { type: 'string', description: '服务器别名（推荐）' },
             host: { type: 'string', description: '服务器地址' },
             port: { type: 'number', description: 'SSH 端口' },
             username: { type: 'string', description: '用户名' },
+            targetConfirmationToken: { type: 'string', description: '服务器切换确认 token' },
           },
           required: ['path'],
         },
       },
       {
         name: 'sftp_upload',
-        description: '上传文件到远程服务器',
+        description: '上传文件到远程服务器。推荐使用 alias 指定目标服务器。多服务器场景下切换目标时需确认。',
         inputSchema: {
           type: 'object',
           properties: {
             localPath: { type: 'string', description: '本地文件路径' },
             remotePath: { type: 'string', description: '远程目标路径' },
+            alias: { type: 'string', description: '服务器别名（推荐）' },
             host: { type: 'string', description: '服务器地址' },
             port: { type: 'number', description: 'SSH 端口' },
             username: { type: 'string', description: '用户名' },
             overwrite: { type: 'boolean', description: '是否覆盖已存在文件' },
+            targetConfirmationToken: { type: 'string', description: '服务器切换确认 token' },
           },
           required: ['localPath', 'remotePath'],
         },
       },
       {
         name: 'sftp_download',
-        description: '从远程服务器下载文件',
+        description: '从远程服务器下载文件。推荐使用 alias 指定目标服务器。多服务器场景下切换目标时需确认。',
         inputSchema: {
           type: 'object',
           properties: {
             remotePath: { type: 'string', description: '远程文件路径' },
             localPath: { type: 'string', description: '本地目标路径' },
+            alias: { type: 'string', description: '服务器别名（推荐）' },
             host: { type: 'string', description: '服务器地址' },
             port: { type: 'number', description: 'SSH 端口' },
             username: { type: 'string', description: '用户名' },
             overwrite: { type: 'boolean', description: '是否覆盖已存在文件' },
+            targetConfirmationToken: { type: 'string', description: '服务器切换确认 token' },
           },
           required: ['remotePath', 'localPath'],
         },
       },
       {
         name: 'sftp_mkdir',
-        description: '在远程服务器创建目录',
+        description: '在远程服务器创建目录。推荐使用 alias 指定目标服务器。多服务器场景下切换目标时需确认。',
         inputSchema: {
           type: 'object',
           properties: {
             path: { type: 'string', description: '目录路径' },
+            alias: { type: 'string', description: '服务器别名（推荐）' },
             host: { type: 'string', description: '服务器地址' },
             port: { type: 'number', description: 'SSH 端口' },
             username: { type: 'string', description: '用户名' },
             recursive: { type: 'boolean', description: '是否递归创建' },
+            targetConfirmationToken: { type: 'string', description: '服务器切换确认 token' },
           },
           required: ['path'],
         },
       },
       {
         name: 'sftp_rm',
-        description: '删除远程文件或目录',
+        description: '删除远程文件或目录。推荐使用 alias 指定目标服务器。多服务器场景下切换目标时需确认。',
         inputSchema: {
           type: 'object',
           properties: {
             path: { type: 'string', description: '文件或目录路径' },
+            alias: { type: 'string', description: '服务器别名（推荐）' },
             host: { type: 'string', description: '服务器地址' },
             port: { type: 'number', description: 'SSH 端口' },
             username: { type: 'string', description: '用户名' },
             recursive: { type: 'boolean', description: '是否递归删除（目录）' },
+            targetConfirmationToken: { type: 'string', description: '服务器切换确认 token' },
           },
           required: ['path'],
         },

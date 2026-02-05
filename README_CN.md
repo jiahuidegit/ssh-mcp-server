@@ -6,51 +6,73 @@
 [![npm version](https://img.shields.io/npm/v/@erliban/ssh-mcp-server.svg)](https://www.npmjs.com/package/@erliban/ssh-mcp-server)
 [![npm downloads](https://img.shields.io/npm/dm/@erliban/ssh-mcp-server.svg)](https://www.npmjs.com/package/@erliban/ssh-mcp-server)
 
-**🔐 基于 MCP 协议的安全远程服务器管理工具，支持 SSH 连接、命令执行、SFTP 文件传输**
+**基于 MCP 协议的安全远程服务器管理工具，支持 SSH 连接、命令执行、SFTP 文件传输**
 
-> ⭐ **觉得有用？请在 [GitHub](https://github.com/jiahuidegit/ssh-mcp-server) 上点个 Star 支持一下！** 您的支持是我们前进的动力！
+**唯一能真正防止 AI 在错误服务器上执行命令的 MCP SSH 工具。**
+
+> 觉得有用？请在 [GitHub](https://github.com/jiahuidegit/ssh-mcp-server) 上点个 Star 支持一下！您的支持是我们前进的动力！
 
 [English](README.md) | [中文](README_CN.md)
 
 ---
 
-## 🚀 功能特性
+## 为什么选择 SSH MCP Server？
 
-- 🔗 **SSH 连接管理** - 密码/密钥认证，连接池自动复用
-- ⚡ **命令执行** - 普通命令、sudo 命令、批量执行
-- 📁 **SFTP 操作** - 上传、下载、列目录、创建/删除文件
-- 💾 **服务器管理** - 保存/列出/删除服务器配置
-- 🔒 **凭证安全** - 系统 Keychain 加密存储（macOS/Windows/Linux）
-- 📝 **审计日志** - 记录所有操作，敏感信息自动脱敏
+用 AI 助手管理远程服务器很强大 -- 但也很危险。当连接多台服务器时，AI 模型经常搞混当前操作的是哪台服务器。在生产服务器上误执行一个 `rm -rf`，后果不堪设想。
+
+**SSH MCP Server 从底层架构就是为了解决这个问题而设计的。** 所有安全机制都在服务端通过加密 token 强制执行 -- AI 无法绕过，无论如何。
+
+### 其他工具没有的安全保障：
+
+- **目标锁定（Target Lock）** -- 追踪 AI 当前操作的服务器，切换目标时必须确认。不会悄悄犯错。
+- **别名路由** -- 用别名（如 `us-prod`、`jp-staging`）保存服务器，然后用 `exec(alias: "us-prod")` 代替原始 IP。更难搞混。
+- **危险命令检测** -- 60+ 种模式，覆盖 Docker、Kubernetes、数据库、系统命令。全部需要加密 token 确认。
+- **多连接强制指定** -- 当连接多台服务器时，每个操作必须指定目标。没有模糊的默认行为。
+- **环境标签** -- 给服务器标注 `production` / `staging` / `test`，每条命令输出都显示在哪个环境执行的。
 
 ---
 
-## 🆕 最近更新
+## 功能特性
 
-### v0.4.0（最新版）
+- **SSH 连接管理** - 密码/密钥认证，连接池自动复用
+- **命令执行** - 普通命令、sudo 命令、批量执行、Shell 模式（堡垒机穿透）
+- **SFTP 操作** - 上传、下载、列目录、创建/删除文件
+- **服务器管理** - 保存/列出/删除服务器配置，支持别名路由
+- **凭证安全** - 系统 Keychain 加密存储（macOS/Windows/Linux）
+- **审计日志** - 记录所有操作，敏感信息自动脱敏
+- **持久化 Shell 会话** - 支持堡垒机多轮交互
+- **目标锁定保护** - 防止 AI 在错误的服务器上执行命令
 
-- 🔗 **Shell 模式执行** - 新增 `exec_shell` 工具，支持不支持 exec 模式的堡垒机
-  - 通过交互式 PTY shell 执行命令
-  - 完美适配跳板机/堡垒机穿透场景
-  - 支持自定义提示符正则，适配不同 shell 环境
+---
 
-### v0.3.1
+## 最近更新
 
-- 💡 **错误提示增强** - 所有 SSH 错误现在包含中英文对照的解决方案
-- 📖 **npm 文档完善** - 添加 GitHub 仓库链接，方便贡献和反馈
+### v0.7.0（最新版）
 
-### v0.3.0
+- **目标锁定：服务器切换保护** - 多服务器场景的核心安全特性
+  - 追踪 AI 当前操作目标，切换服务器时需要加密 token 确认
+  - 单服务器：零开销。多服务器连续操作同一台：零开销。仅在实际切换时触发。
+  - 覆盖所有工具：exec、exec_sudo、exec_shell、shell_send 以及所有 SFTP 操作
+  - 如果同时需要切换确认和危险命令确认，分两轮执行（切换优先）
+- **所有工具支持别名（alias）** - 用服务器别名代替原始 host/port/username
+  - `exec(alias: "us-prod", command: "ls")` -- 自动路由到已保存的服务器配置
+  - 所有 exec 和 SFTP 工具均支持新的 `alias` 参数
+- **所有输出显示服务器环境标签** - 每条命令结果显示 `[服务器: us-prod (root@1.2.3.4) | 环境: PRODUCTION]`
+  - 不再仅限生产环境 -- 所有环境都会标注
+- **SFTP 多连接安全检查** - SFTP 操作现在与命令执行使用相同的多连接安全检查
+  - SFTP 返回结果包含 `server` 字段，含完整身份信息
+- **连接时显示活跃连接列表** - 连接第二台服务器时，返回信息列出所有活跃连接作为提醒
 
-- 🔄 **优化重连机制** - 修复断开连接后重连报错"配置不存在"的问题
-- 💾 **配置与状态分离** - 连接配置持久化保留，断开后仍可随时重连
-- 📦 **新增配置管理 API** - `getCachedConfig()`、`listCachedConfigs()`、`clearConfigCache()` 等
-- ⚡ **无需重新输入密码** - 断开后重连无需再次输入凭证
+### v0.6.0
 
-### v0.2.2
+- **服务器身份识别系统** - 命令返回完整服务器身份（host、port、username、environment、alias）
+- **确认 Token 机制** - 加密 token 替代布尔标志，AI 无法伪造确认
+- **60+ 危险命令模式** - Docker、Kubernetes、数据库、系统服务、Git、网络、包管理器
+- **多连接强制指定** - 多连接时必须指定目标
 
-- ⏱️ **长超时支持** - 新增 `longCommandTimeout` 配置（30 分钟），适用于 docker build 等耗时操作
-- 💓 **连接健康检查** - 每 30 秒自动心跳检测连接状态
-- 🔄 **自动重连功能** - 连接丢失后自动重连，支持指数退避重试策略（最多 3 次）
+### v0.5.0
+
+- **持久化 Shell 会话** - `shell_send`、`shell_read`、`shell_close` 支持堡垒机多轮交互
 
 [查看完整更新日志](CHANGELOG.md) | [所有版本发布](https://github.com/jiahuidegit/ssh-mcp-server/releases)
 
@@ -174,16 +196,19 @@ npm list -g @erliban/ssh-mcp-server
 
 | 工具 | 说明 |
 |------|------|
-| `exec` | 执行远程命令 |
+| `exec` | 执行远程命令（支持别名路由） |
 | `exec_sudo` | 以 sudo 权限执行命令 |
 | `exec_batch` | 在多台服务器上批量执行 |
 | `exec_shell` | 通过交互式 shell 执行（用于堡垒机穿透） |
+| `shell_send` | 发送输入到持久化 shell 会话 |
+| `shell_read` | 读取 shell 会话输出缓冲区 |
+| `shell_close` | 关闭持久化 shell 会话 |
 
 ### SFTP 操作
 
 | 工具 | 说明 |
 |------|------|
-| `sftp_ls` | 列出目录内容 |
+| `sftp_ls` | 列出目录内容（支持别名路由） |
 | `sftp_upload` | 上传文件 |
 | `sftp_download` | 下载文件 |
 | `sftp_mkdir` | 创建目录 |
@@ -195,6 +220,7 @@ npm list -g @erliban/ssh-mcp-server
 |------|------|
 | `health_check` | 检查连接状态 |
 | `get_logs` | 获取审计日志 |
+| `list_active_connections` | 列出所有活跃连接及环境标签 |
 
 ---
 
@@ -236,12 +262,14 @@ Claude: [调用 list_servers，然后 exec_batch]
 
 ---
 
-## 🔒 安全说明
+## 安全说明
 
-1. **凭证存储** - 优先使用系统 Keychain（macOS Keychain、Windows 凭据管理器），无桌面环境时使用 AES-256-GCM 加密文件
-2. **日志脱敏** - 密码、私钥等敏感信息自动脱敏
-3. **危险命令** - 禁止删除系统根目录等危险操作
-4. **连接池** - 自动清理空闲连接，避免资源泄漏
+1. **目标锁定** - 追踪 AI 操作目标，切换服务器时需要加密 token 确认。彻底防止 AI 服务器误操作这一头号安全隐患。
+2. **凭证存储** - 优先使用系统 Keychain（macOS Keychain、Windows 凭据管理器），无桌面环境时使用 AES-256-GCM 加密文件
+3. **日志脱敏** - 密码、私钥等敏感信息自动脱敏
+4. **危险命令** - 60+ 种模式检测，全部需要 token 确认，生产环境有额外警告
+5. **连接池** - 自动清理空闲连接，避免资源泄漏
+6. **多连接安全** - 多服务器连接时，每个操作必须明确指定目标服务器
 
 ---
 

@@ -8,6 +8,8 @@ import { CommandExecutor } from '../core/command-executor.js';
 import { SSHManager } from '../core/ssh-manager.js';
 import { ExecResult, BatchExecResult } from '../types/index.js';
 import { ConfirmationManager } from '../utils/confirmation-manager.js';
+import { TargetGuard, TargetSwitchResponse } from '../utils/target-guard.js';
+import { getConnectionKey } from '../utils/index.js';
 
 // 危险命令模式列表
 const DANGEROUS_PATTERNS = [
@@ -134,6 +136,7 @@ function detectDangerousCommand(command: string): string | null {
 // exec 参数 Schema
 export const ExecSchema = z.object({
   command: z.string().min(1, '命令不能为空'),
+  alias: z.string().optional(),
   host: z.string().optional(),
   port: z.number().int().min(1).max(65535).optional(),
   username: z.string().optional(),
@@ -142,18 +145,23 @@ export const ExecSchema = z.object({
   cwd: z.string().optional(),
   // 确认 token：危险命令需要先获取 token，然后用 token 确认执行
   confirmationToken: z.string().optional(),
+  // 目标切换确认 token
+  targetConfirmationToken: z.string().optional(),
 });
 
 // exec_sudo 参数 Schema
 export const ExecSudoSchema = z.object({
   command: z.string().min(1, '命令不能为空'),
   sudoPassword: z.string().min(1, 'sudo 密码不能为空'),
+  alias: z.string().optional(),
   host: z.string().optional(),
   port: z.number().int().min(1).max(65535).optional(),
   username: z.string().optional(),
   timeout: z.number().int().min(1000).optional(),
   // 确认 token
   confirmationToken: z.string().optional(),
+  // 目标切换确认 token
+  targetConfirmationToken: z.string().optional(),
 });
 
 // exec_batch 参数 Schema
@@ -178,6 +186,7 @@ export type ExecBatchParams = z.infer<typeof ExecBatchSchema>;
 // exec_shell 参数 Schema（用于不支持 exec 的堡垒机）
 export const ExecShellSchema = z.object({
   command: z.string().min(1, '命令不能为空'),
+  alias: z.string().optional(),
   host: z.string().optional(),
   port: z.number().int().min(1).max(65535).optional(),
   username: z.string().optional(),
@@ -186,6 +195,8 @@ export const ExecShellSchema = z.object({
   promptPattern: z.string().optional(),
   // 确认 token
   confirmationToken: z.string().optional(),
+  // 目标切换确认 token
+  targetConfirmationToken: z.string().optional(),
 });
 
 export type ExecShellParams = z.infer<typeof ExecShellSchema>;
@@ -193,6 +204,7 @@ export type ExecShellParams = z.infer<typeof ExecShellSchema>;
 // shell_send 参数 Schema（持久化 shell 交互）
 export const ShellSendSchema = z.object({
   input: z.string().min(1, '输入不能为空'),
+  alias: z.string().optional(),
   host: z.string().optional(),
   port: z.number().int().min(1).max(65535).optional(),
   username: z.string().optional(),
@@ -201,10 +213,13 @@ export const ShellSendSchema = z.object({
   clearBuffer: z.boolean().default(false), // 是否先清空缓冲区
   // 确认 token：危险输入需要先获取 token
   confirmationToken: z.string().optional(),
+  // 目标切换确认 token
+  targetConfirmationToken: z.string().optional(),
 });
 
 // shell_read 参数 Schema
 export const ShellReadSchema = z.object({
+  alias: z.string().optional(),
   host: z.string().optional(),
   port: z.number().int().min(1).max(65535).optional(),
   username: z.string().optional(),
@@ -213,6 +228,7 @@ export const ShellReadSchema = z.object({
 
 // shell_close 参数 Schema
 export const ShellCloseSchema = z.object({
+  alias: z.string().optional(),
   host: z.string().optional(),
   port: z.number().int().min(1).max(65535).optional(),
   username: z.string().optional(),
@@ -229,7 +245,8 @@ export class ExecTools {
   constructor(
     private executor: CommandExecutor,
     private sshManager?: SSHManager,
-    private confirmationManager?: ConfirmationManager
+    private confirmationManager?: ConfirmationManager,
+    private targetGuard?: TargetGuard
   ) {}
 
   /**
@@ -279,7 +296,19 @@ export class ExecTools {
   /**
    * 执行命令
    */
-  async exec(params: ExecParams): Promise<ExecResult | { confirmationRequired: true; confirmationToken: string; expiresAt: Date; warning: string }> {
+  async exec(params: ExecParams): Promise<ExecResult | TargetSwitchResponse | { confirmationRequired: true; confirmationToken: string; expiresAt: Date; warning: string }> {
+    // 目标校验（切换确认优先于危险命令确认）
+    if (this.targetGuard) {
+      const { resolved, confirmationResponse } = this.targetGuard.validateTarget('exec', params);
+      if (confirmationResponse) {
+        return confirmationResponse;
+      }
+      // 用解析后的参数覆盖（alias -> host/port/username）
+      if (resolved.host) {
+        params = { ...params, host: resolved.host, port: resolved.port, username: resolved.username };
+      }
+    }
+
     // 获取服务器环境信息
     const serverIdentity = this.sshManager?.getServerIdentity(params.host, params.port, params.username);
     const environment = serverIdentity?.environment;
@@ -290,7 +319,7 @@ export class ExecTools {
     if (danger) {
       // 生产环境额外警告
       const envWarning = isProduction
-        ? `\n\n🚨 警告：这是【生产环境】服务器！\n服务器: ${serverIdentity?.alias || `${params.host}:${params.port ?? 22}`}\n环境: PRODUCTION\n`
+        ? `\n\n警告：这是【生产环境】服务器！\n服务器: ${serverIdentity?.alias || `${params.host}:${params.port ?? 22}`}\n环境: PRODUCTION\n`
         : environment
         ? `\n\n环境: ${environment.toUpperCase()}\n`
         : '';
@@ -299,7 +328,7 @@ export class ExecTools {
         danger,
         'exec',
         params,
-        `⚠️ 检测到危险命令: ${danger}${envWarning}命令: ${params.command}\n\n此命令可能对服务器造成不可恢复的损害！`
+        `检测到危险命令: ${danger}${envWarning}命令: ${params.command}\n\n此命令可能对服务器造成不可恢复的损害！`
       );
 
       if (confirmation) {
@@ -320,11 +349,16 @@ export class ExecTools {
         }
       );
 
-      // 在返回结果中突出显示环境信息
-      if (isProduction) {
-        result.stdout = `[执行环境: 🔴 PRODUCTION]\n${result.stdout}`;
-      } else if (environment) {
-        result.stdout = `[执行环境: ${environment.toUpperCase()}]\n${result.stdout}`;
+      // 记录操作目标
+      if (this.targetGuard && result.server) {
+        const key = getConnectionKey(result.server.host, result.server.port, result.server.username);
+        this.targetGuard.recordTarget(key, result.server);
+      }
+
+      // 在返回结果中显示环境信息（所有连接都显示）
+      const serverLabel = this.formatServerLabel(result.server);
+      if (serverLabel) {
+        result.stdout = `${serverLabel}\n${result.stdout}`;
       }
 
       return result;
@@ -336,14 +370,14 @@ export class ExecTools {
         // 超时错误提示
         if (message.includes('超时') && !params.useLongTimeout) {
           throw new Error(
-            `${message}\n\n💡 建议：如果是 docker build、npm install 等耗时命令，请使用 useLongTimeout: true 选项（默认30分钟超时）。`
+            `${message}\n\n建议：如果是 docker build、npm install 等耗时命令，请使用 useLongTimeout: true 选项（默认30分钟超时）。`
           );
         }
 
         // 连接断开错误提示
         if (message.includes('没有可用的 SSH 连接')) {
           throw new Error(
-            `${message}\n\n💡 建议：\n1. 使用 ssh_connect 工具重新建立连接\n2. 如果启用了自动重连（默认开启），系统会尝试自动恢复连接`
+            `${message}\n\n建议：\n1. 使用 ssh_connect 工具重新建立连接\n2. 如果启用了自动重连（默认开启），系统会尝试自动恢复连接`
           );
         }
       }
@@ -354,7 +388,18 @@ export class ExecTools {
   /**
    * 执行 sudo 命令
    */
-  async execSudo(params: ExecSudoParams): Promise<ExecResult | { confirmationRequired: true; confirmationToken: string; expiresAt: Date; warning: string }> {
+  async execSudo(params: ExecSudoParams): Promise<ExecResult | TargetSwitchResponse | { confirmationRequired: true; confirmationToken: string; expiresAt: Date; warning: string }> {
+    // 目标校验
+    if (this.targetGuard) {
+      const { resolved, confirmationResponse } = this.targetGuard.validateTarget('exec_sudo', params);
+      if (confirmationResponse) {
+        return confirmationResponse;
+      }
+      if (resolved.host) {
+        params = { ...params, host: resolved.host, port: resolved.port, username: resolved.username };
+      }
+    }
+
     // 获取服务器环境信息
     const serverIdentity = this.sshManager?.getServerIdentity(params.host, params.port, params.username);
     const environment = serverIdentity?.environment;
@@ -365,7 +410,7 @@ export class ExecTools {
     if (danger) {
       // 生产环境额外警告
       const envWarning = isProduction
-        ? `\n\n🚨 警告：这是【生产环境】服务器！\n服务器: ${serverIdentity?.alias || `${params.host}:${params.port ?? 22}`}\n环境: PRODUCTION\n`
+        ? `\n\n警告：这是【生产环境】服务器！\n服务器: ${serverIdentity?.alias || `${params.host}:${params.port ?? 22}`}\n环境: PRODUCTION\n`
         : environment
         ? `\n\n环境: ${environment.toUpperCase()}\n`
         : '';
@@ -374,7 +419,7 @@ export class ExecTools {
         danger,
         'exec_sudo',
         params,
-        `⚠️ 检测到危险的 sudo 命令: ${danger}${envWarning}命令: sudo ${params.command}\n\n此命令以 root 权限执行，可能对服务器造成不可恢复的损害！`
+        `检测到危险的 sudo 命令: ${danger}${envWarning}命令: sudo ${params.command}\n\n此命令以 root 权限执行，可能对服务器造成不可恢复的损害！`
       );
 
       if (confirmation) {
@@ -382,7 +427,7 @@ export class ExecTools {
       }
     }
 
-    return this.executor.execSudo(
+    const result = await this.executor.execSudo(
       params.command,
       params.sudoPassword,
       params.host,
@@ -390,10 +435,24 @@ export class ExecTools {
       params.username,
       { timeout: params.timeout }
     );
+
+    // 记录操作目标
+    if (this.targetGuard && result.server) {
+      const key = getConnectionKey(result.server.host, result.server.port, result.server.username);
+      this.targetGuard.recordTarget(key, result.server);
+    }
+
+    // 显示环境信息
+    const serverLabel = this.formatServerLabel(result.server);
+    if (serverLabel) {
+      result.stdout = `${serverLabel}\n${result.stdout}`;
+    }
+
+    return result;
   }
 
   /**
-   * 批量执行命令
+   * 批量执行命令（跳过目标切换校验，本身就是多目标操作）
    */
   async execBatch(params: ExecBatchParams): Promise<{ results: BatchExecResult[] } | { confirmationRequired: true; confirmationToken: string; expiresAt: Date; warning: string }> {
     // 批量执行更危险，进行检测
@@ -410,14 +469,14 @@ export class ExecTools {
       }
 
       const envWarning = hasProduction
-        ? `\n\n🚨 警告：目标服务器中包含【生产环境】！\n`
+        ? `\n\n警告：目标服务器中包含【生产环境】！\n`
         : '';
 
       const confirmation = this.handleDangerousCommand(
         danger,
         'exec_batch',
         params,
-        `⚠️ 检测到危险的批量命令: ${danger}${envWarning}命令: ${params.command}\n目标服务器: ${params.servers.length} 台\n\n此命令将在多台服务器上执行，可能造成大规模损害！`
+        `检测到危险的批量命令: ${danger}${envWarning}命令: ${params.command}\n目标服务器: ${params.servers.length} 台\n\n此命令将在多台服务器上执行，可能造成大规模损害！`
       );
 
       if (confirmation) {
@@ -436,7 +495,18 @@ export class ExecTools {
   /**
    * 通过 shell 模式执行命令（用于不支持 exec 的堡垒机）
    */
-  async execShell(params: ExecShellParams): Promise<ExecResult | { confirmationRequired: true; confirmationToken: string; expiresAt: Date; warning: string }> {
+  async execShell(params: ExecShellParams): Promise<ExecResult | TargetSwitchResponse | { confirmationRequired: true; confirmationToken: string; expiresAt: Date; warning: string }> {
+    // 目标校验
+    if (this.targetGuard) {
+      const { resolved, confirmationResponse } = this.targetGuard.validateTarget('exec_shell', params);
+      if (confirmationResponse) {
+        return confirmationResponse;
+      }
+      if (resolved.host) {
+        params = { ...params, host: resolved.host, port: resolved.port, username: resolved.username };
+      }
+    }
+
     // 获取服务器环境信息
     const serverIdentity = this.sshManager?.getServerIdentity(params.host, params.port, params.username);
     const environment = serverIdentity?.environment;
@@ -447,7 +517,7 @@ export class ExecTools {
     if (danger) {
       // 生产环境额外警告
       const envWarning = isProduction
-        ? `\n\n🚨 警告：这是【生产环境】服务器！\n服务器: ${serverIdentity?.alias || `${params.host}:${params.port ?? 22}`}\n环境: PRODUCTION\n`
+        ? `\n\n警告：这是【生产环境】服务器！\n服务器: ${serverIdentity?.alias || `${params.host}:${params.port ?? 22}`}\n环境: PRODUCTION\n`
         : environment
         ? `\n\n环境: ${environment.toUpperCase()}\n`
         : '';
@@ -456,7 +526,7 @@ export class ExecTools {
         danger,
         'exec_shell',
         params,
-        `⚠️ 检测到危险命令: ${danger}${envWarning}命令: ${params.command}\n\n此命令可能对服务器造成不可恢复的损害！`
+        `检测到危险命令: ${danger}${envWarning}命令: ${params.command}\n\n此命令可能对服务器造成不可恢复的损害！`
       );
 
       if (confirmation) {
@@ -464,7 +534,7 @@ export class ExecTools {
       }
     }
 
-    return this.executor.execShell(
+    const result = await this.executor.execShell(
       params.command,
       params.host,
       params.port,
@@ -474,14 +544,39 @@ export class ExecTools {
         promptPattern: params.promptPattern,
       }
     );
+
+    // 记录操作目标
+    if (this.targetGuard && result.server) {
+      const key = getConnectionKey(result.server.host, result.server.port, result.server.username);
+      this.targetGuard.recordTarget(key, result.server);
+    }
+
+    // 显示环境信息
+    const serverLabel = this.formatServerLabel(result.server);
+    if (serverLabel) {
+      result.stdout = `${serverLabel}\n${result.stdout}`;
+    }
+
+    return result;
   }
 
   /**
    * 发送输入到持久化 shell（用于多轮交互，如堡垒机穿透）
    */
-  async shellSend(params: ShellSendParams): Promise<{ output: string; promptDetected: boolean } | { confirmationRequired: true; confirmationToken: string; expiresAt: Date; warning: string }> {
+  async shellSend(params: ShellSendParams): Promise<{ output: string; promptDetected: boolean } | TargetSwitchResponse | { confirmationRequired: true; confirmationToken: string; expiresAt: Date; warning: string }> {
     if (!this.sshManager) {
       throw new Error('SSHManager 未初始化');
+    }
+
+    // 目标校验
+    if (this.targetGuard) {
+      const { resolved, confirmationResponse } = this.targetGuard.validateTarget('shell_send', params);
+      if (confirmationResponse) {
+        return confirmationResponse;
+      }
+      if (resolved.host) {
+        params = { ...params, host: resolved.host, port: resolved.port, username: resolved.username };
+      }
     }
 
     // 危险命令检测（防止通过 shell_send 绕过 exec 的保护）
@@ -492,7 +587,7 @@ export class ExecTools {
       const isProduction = environment === 'production';
 
       const envWarning = isProduction
-        ? `\n\n🚨 警告：这是【生产环境】服务器！\n服务器: ${serverIdentity?.alias || `${params.host}:${params.port ?? 22}`}\n环境: PRODUCTION\n`
+        ? `\n\n警告：这是【生产环境】服务器！\n服务器: ${serverIdentity?.alias || `${params.host}:${params.port ?? 22}`}\n环境: PRODUCTION\n`
         : environment
         ? `\n\n环境: ${environment.toUpperCase()}\n`
         : '';
@@ -501,7 +596,7 @@ export class ExecTools {
         danger,
         'shell_send',
         params,
-        `⚠️ 检测到危险输入: ${danger}${envWarning}输入: ${params.input}\n\n此输入可能对服务器造成不可恢复的损害！`
+        `检测到危险输入: ${danger}${envWarning}输入: ${params.input}\n\n此输入可能对服务器造成不可恢复的损害！`
       );
 
       if (confirmation) {
@@ -509,7 +604,7 @@ export class ExecTools {
       }
     }
 
-    return this.sshManager.shellSend(
+    const result = await this.sshManager.shellSend(
       params.input,
       params.host,
       params.port,
@@ -520,6 +615,15 @@ export class ExecTools {
         clearBuffer: params.clearBuffer,
       }
     );
+
+    // 记录操作目标
+    if (this.targetGuard && params.host && params.username) {
+      const key = getConnectionKey(params.host, params.port ?? 22, params.username);
+      const identity = this.sshManager.getServerIdentity(params.host, params.port, params.username);
+      this.targetGuard.recordTarget(key, identity);
+    }
+
+    return result;
   }
 
   /**
@@ -528,6 +632,14 @@ export class ExecTools {
   async shellRead(params: ShellReadParams): Promise<{ buffer: string }> {
     if (!this.sshManager) {
       throw new Error('SSHManager 未初始化');
+    }
+
+    // alias 解析
+    if (this.targetGuard && params.alias) {
+      const resolved = this.targetGuard.resolveServer(params);
+      if (resolved.host) {
+        params = { ...params, host: resolved.host, port: resolved.port, username: resolved.username };
+      }
     }
 
     const buffer = await this.sshManager.shellRead(
@@ -547,7 +659,32 @@ export class ExecTools {
       throw new Error('SSHManager 未初始化');
     }
 
+    // alias 解析
+    if (this.targetGuard && params.alias) {
+      const resolved = this.targetGuard.resolveServer(params);
+      if (resolved.host) {
+        params = { ...params, host: resolved.host, port: resolved.port, username: resolved.username };
+      }
+    }
+
     await this.sshManager.closeShell(params.host, params.port, params.username);
     return { success: true, message: '已关闭 shell 会话' };
+  }
+
+  /**
+   * 格式化服务器标签，用于在输出中标注当前执行环境
+   */
+  private formatServerLabel(server?: import('../types/index.js').ServerIdentity): string | null {
+    if (!server) return null;
+
+    const parts: string[] = [];
+    const name = server.alias || `${server.host}:${server.port}`;
+    parts.push(`[服务器: ${name} (${server.username}@${server.host})`);
+
+    if (server.environment) {
+      parts.push(`| 环境: ${server.environment.toUpperCase()}`);
+    }
+
+    return parts.join(' ') + ']';
   }
 }

@@ -279,6 +279,27 @@ export class SFTPOperator {
     if (host && username) {
       client = this.sshManager.getConnection(host, port ?? 22, username);
     } else {
+      // 多连接安全检查：与 command-executor 的 getClient 对齐
+      const allConnections = this.sshManager.listConnections();
+
+      if (allConnections.length > 1) {
+        const connectionsList = allConnections
+          .map((conn) => {
+            const identity = this.sshManager.getServerIdentity(conn.host, conn.port, conn.username);
+            const envLabel = identity.environment
+              ? ` [${identity.environment.toUpperCase()}]`
+              : '';
+            const aliasLabel = identity.alias ? ` (别名: ${identity.alias})` : '';
+            return `  - ${conn.username}@${conn.host}:${conn.port}${envLabel}${aliasLabel}`;
+          })
+          .join('\n');
+
+        throw new SSHError(
+          SSHErrorCode.NOT_CONNECTED,
+          `安全提示：当前有 ${allConnections.length} 个活跃连接，为防止误操作，必须明确指定要操作的服务器！\n\n当前活跃连接：\n${connectionsList}\n\n请明确指定 host 和 username 参数，或使用 alias 指定服务器别名。`
+        );
+      }
+
       const active = this.sshManager.getActiveConnection();
       client = active?.client;
     }
