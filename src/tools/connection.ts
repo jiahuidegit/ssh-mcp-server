@@ -62,15 +62,15 @@ export class ConnectionTools {
       // 获取凭证
       const credential = await this.credentialStore.get(params.alias);
 
+      // 直接传入的凭证优先，未传则使用存储的凭证
       connectOptions = {
         host: serverConfig.host,
         port: serverConfig.port,
         username: serverConfig.username,
-        password: credential?.password,
-        privateKey: credential?.privateKey,
-        passphrase: credential?.passphrase,
+        password: params.password ?? credential?.password,
+        privateKey: params.privateKey ?? credential?.privateKey,
+        passphrase: params.passphrase ?? credential?.passphrase,
         timeout: params.timeout,
-        // 传递 alias 和 environment 信息
         alias: params.alias,
         environment: serverConfig.environment,
       };
