@@ -34,7 +34,7 @@ Managing remote servers with AI assistants is powerful -- but also dangerous. Wh
 
 ## Features
 
-- **SSH Connection Management** - Password/key authentication with connection pooling
+- **SSH Connection Management** - Password/key authentication with connection pooling, private key supports both content and file path
 - **Command Execution** - Regular commands, sudo commands, batch execution, shell mode (bastion hosts)
 - **SFTP Operations** - Upload, download, list directories, create/delete files
 - **Server Management** - Save/list/remove server configurations with alias support
@@ -47,7 +47,14 @@ Managing remote servers with AI assistants is powerful -- but also dangerous. Wh
 
 ## What's New
 
-### v0.7.0 (Latest)
+### v0.8.1 (Latest)
+
+- **Private Key File Path Support** - `privateKey` parameter now accepts both key content and file paths
+  - Previously you had to paste the entire key content; now you can just pass a path like `/path/to/id_rsa.pem` or `~/.ssh/id_rsa`
+  - Auto-detects format: `-----BEGIN` prefix = key content, otherwise treated as file path
+  - Supports `~` home directory expansion
+
+### v0.7.0
 
 - **Target Lock: Server Switch Protection** - The core safety feature for multi-server scenarios
   - Tracks the AI's current operation target; switching servers requires explicit confirmation with a cryptographic token

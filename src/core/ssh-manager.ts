@@ -3,6 +3,8 @@
  * 负责 SSH 连接的建立、复用和生命周期管理
  */
 
+import fs from 'fs';
+import path from 'path';
 import { Client, ConnectConfig, ClientChannel } from 'ssh2';
 import {
   ConnectOptions,
@@ -146,7 +148,7 @@ export class SSHManager {
     if (options.password) {
       connectConfig.password = options.password;
     } else if (options.privateKey) {
-      connectConfig.privateKey = options.privateKey;
+      connectConfig.privateKey = this.resolvePrivateKey(options.privateKey);
       if (options.passphrase) {
         connectConfig.passphrase = options.passphrase;
       }
@@ -315,6 +317,34 @@ export class SSHManager {
 
     // 不应该到这里，但为了类型安全
     throw new SSHError(SSHErrorCode.CONNECTION_FAILED, '重连失败');
+  }
+
+  /**
+   * 解析私钥：如果是文件路径则读取文件内容，否则直接返回
+   */
+  private resolvePrivateKey(privateKey: string): string | Buffer {
+    // 如果已经是私钥内容（以 -----BEGIN 开头），直接返回
+    if (privateKey.trimStart().startsWith('-----BEGIN')) {
+      return privateKey;
+    }
+
+    // 尝试当作文件路径读取（支持 ~ 展开）
+    let filePath = privateKey;
+    if (filePath.startsWith('~')) {
+      filePath = path.join(process.env.HOME || '', filePath.slice(1));
+    }
+
+    try {
+      if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
+        this.logger.log('debug', 'read_private_key_file', { path: filePath });
+        return fs.readFileSync(filePath);
+      }
+    } catch {
+      // 文件读取失败，回退到原始值
+    }
+
+    // 既不是 PEM 内容也不是有效文件路径，直接返回让 ssh2 报更明确的错误
+    return privateKey;
   }
 
   /**

@@ -13,6 +13,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.8.1] - 2026-02-28
+
+### Fixed
+- **Private Key File Path Support** - `privateKey` parameter now accepts both key content and file paths
+  - Previously passing a file path (e.g., `/path/to/id_rsa.pem`) would fail with "Unsupported key format"
+  - Now automatically detects: if the value starts with `-----BEGIN`, it's treated as key content; otherwise it's read as a file path
+  - Supports `~` home directory expansion (e.g., `~/.ssh/id_rsa`)
+  - Falls back gracefully if the path is invalid
+
+### Changed
+- Updated `connect` and `save_server` tool descriptions to clarify that `privateKey` accepts both key content and file paths
+
+---
+
 ## [0.7.0] - 2026-02-05
 
 ### Added
